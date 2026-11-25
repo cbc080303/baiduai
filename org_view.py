@@ -66,7 +66,7 @@ def build_items(rows, names, raw):
         owners = parse_owners(r.get("负责人"), names)
         no_owner = not owners
         due = (r.get("截止时间") or "").strip()
-        no_due = due in ("", "待确认")
+        no_due = (not due) or due.startswith("待确认")
         shared = len(owners) > 1
         soft = "讨论性表述" in (r.get("约束") or "")
         bad_quote = not quote_ok(r, raw) if raw else False
@@ -216,8 +216,9 @@ def main():
         man_times = sum(counts)          # 人次，共担任务会被计两次
         assigned = len([it for it in items if it["owners"]])  # 条数
         avg = man_times / len(counts)
+        top = max(pv, key=lambda r: r["总"])   # 负载最高者，不能取风险排序后的首行
         print(f"有主待办 {assigned} 条，分摊到 {man_times} 人次，人均 {avg:.1f} 人次，"
-              f"最高 {max(counts)} 人次（{pv[0]['姓名']}），集中度 {max(counts) / avg:.1f} 倍。")
+              f"最高 {max(counts)} 人次（{top['姓名']}），集中度 {max(counts) / avg:.1f} 倍。")
 
 
 if __name__ == "__main__":
