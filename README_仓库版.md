@@ -19,7 +19,7 @@
 
 | 文件 | 作用 |
 |---|---|
-| `index.html` | 演示页，也是 GitHub Pages 入口。49,525 字节、845 行，CSS 与 JS 全部内联 |
+| `index.html` | 演示页，也是 GitHub Pages 入口。49,572 字节、845 行，CSS 与 JS 全部内联 |
 | `README.md` | 本说明 |
 | `LICENSE` | MIT |
 | `会议待办质检器_提交附件包.zip` | 27 份完整材料，可直接点下方链接下载 |
