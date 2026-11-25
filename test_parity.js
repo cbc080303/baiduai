@@ -1,7 +1,11 @@
-// 对拍脚本：JS 版 A 通道 vs Python 版 qc_tools.py v1.1
-// 跑法：node test_parity.js
+// 对拍脚本：JS 版 A 通道（a_channel.js，v1.2）vs Python 版 qc_tools.py（v1.2）
+// 跑法：node test_parity.js        —— 两组语料，逐条比对，任一项不一致即退出码 1
 const fs = require("fs");
-const {scanTranscript} = require("./a_channel.js");
+const path = require("path");
+const {execFileSync} = require("child_process");
+const {A_CHANNEL} = require("./a_channel.js");
+
+const HERE = __dirname;
 
 const DEMO_ROWS = [
   ["1", "拉取新用户引导漏斗数据并按渠道拆分", "王睿", "下周二前", "按渠道拆分，交付张岚", ""],
@@ -17,21 +21,102 @@ const DEMO_ROWS = [
   ["11", "发送会议纪要到项目群并抄送赵敏", "待确认", "待确认", "抄送赵敏", ""],
 ];
 
-const rows = DEMO_ROWS.map(r => ({
-  "编号": r[0], "任务": r[1], "负责人": r[2], "截止时间": r[3], "约束": r[4]
-}));
-
-const raw = fs.readFileSync("会议转录_产品运营周会_示例.txt", "utf8");
-const res = scanTranscript(raw, rows);
-
-console.log("参会人 " + res.names.length + " 人：" + res.names.join("、"));
-console.log("句子 " + res.sentences.length + " 条");
-console.log("候选 " + res.cands.length + " 条；低置信 " + res.low.length + " 条");
-console.log("---");
-res.cands.forEach((c, i) => {
-  console.log((i + 1) + " | " + c["人物"] + " | " + c["置信度"] + " | " + c["时间"] + " | " + c["句"]);
-});
-if (res.low.length){
-  console.log("--- 低置信池 ---");
-  res.low.forEach(c => console.log(c["人物"] + " | " + c["句"] + " | " + c["备注"]));
+function demoRows(){
+  return DEMO_ROWS.map(r => ({"编号": r[0], "任务": r[1], "负责人": r[2], "截止时间": r[3], "约束": r[4]}));
 }
+
+function csvRows(file){
+  const text = fs.readFileSync(path.join(HERE, file), "utf8").replace(/^\uFEFF/, "");
+  const lines = text.split(/\r?\n/).filter(l => l.trim());
+  const head = lines[0].split(",").map(s => s.replace(/^"|"$/g, "").trim());
+  return lines.slice(1).map(line => {
+    const cells = [];
+    let cur = "", inQuote = false;
+    for (let i = 0; i < line.length; i++){
+      const ch = line[i];
+      if (ch === '"'){
+        if (inQuote && line[i + 1] === '"'){ cur += '"'; i++; }
+        else inQuote = !inQuote;
+      } else if (ch === "," && !inQuote){
+        cells.push(cur); cur = "";
+      } else cur += ch;
+    }
+    cells.push(cur);
+    const row = {};
+    head.forEach((h, i) => { row[h] = (cells[i] || "").trim(); });
+    return row;
+  });
+}
+
+const CASES = [
+  ["示例转录", "会议转录_产品运营周会_示例.txt", demoRows()],
+  ["第2组实录", "会议转录_公开实录_第2组.txt", csvRows("会议待办_生成版_第2组.csv")],
+];
+
+function norm(items, keys){
+  return items.map(it => keys.map(k => String(it[k] == null ? "" : it[k])).join("\u0001")).sort();
+}
+
+function jsSide(){
+  const out = {};
+  for (const [label, file, rows] of CASES){
+    const raw = fs.readFileSync(path.join(HERE, file), "utf8");
+    const res = A_CHANNEL.scan(raw, rows);
+    out[label] = {
+      names: res.names,
+      count: res.count,
+      cands: norm(res.cands, ["人物", "句", "置信度", "时间"]),
+      low: norm(res.low, ["人物", "句", "置信度", "时间"]),
+      orgs: norm(res.orgs, ["主体", "句", "时间"]),
+    };
+  }
+  return out;
+}
+
+function pySide(){
+  const raw = execFileSync("python", [path.join(HERE, "parity_dump.py")], {cwd: HERE, encoding: "utf8"});
+  const j = JSON.parse(raw);
+  const out = {};
+  for (const label of Object.keys(j)){
+    out[label] = {
+      names: j[label].names,
+      count: j[label].count,
+      cands: j[label].cands.map(t => t.join("\u0001")),
+      low: j[label].low.map(t => t.join("\u0001")),
+      orgs: j[label].orgs.map(t => t.join("\u0001")),
+    };
+  }
+  return out;
+}
+
+function cmp(label, key, a, b, problems){
+  const sa = JSON.stringify(a), sb = JSON.stringify(b);
+  if (sa === sb){
+    console.log(`PASS  ${label} · ${key}（${Array.isArray(a) ? a.length : a}）`);
+    return;
+  }
+  problems.push(`${label} · ${key}\n  JS: ${sa}\n  PY: ${sb}`);
+  console.log(`FAIL  ${label} · ${key}`);
+}
+
+const js = jsSide();
+const py = pySide();
+const problems = [];
+
+console.log("=== 对拍：a_channel.js v1.2 vs qc_tools.py v1.2 ===");
+for (const [label] of CASES){
+  console.log(`--- ${label} ---`);
+  cmp(label, "names", js[label].names, py[label].names, problems);
+  cmp(label, "count", js[label].count, py[label].count, problems);
+  cmp(label, "cands", js[label].cands, py[label].cands, problems);
+  cmp(label, "low", js[label].low, py[label].low, problems);
+  cmp(label, "orgs", js[label].orgs, py[label].orgs, problems);
+  console.log(`      候选 ${js[label].cands.length}｜低置信 ${js[label].low.length}｜机构 ${js[label].orgs.length}`);
+}
+
+if (problems.length){
+  console.log("\n=== 不一致明细 ===");
+  problems.forEach(p => console.log(p));
+  process.exit(1);
+}
+console.log("\nALL PARITY PASS：两组语料、五类输出逐条一致");
