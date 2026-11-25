@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""会议待办质检辅助工具 v1.1
+"""会议待办质检辅助工具 v1.2
 
 设计原则：只做机器能给出硬证据的部分，不假装能判断语义。
 三个通道，分别对应质检的 D / A / B 维度：
@@ -8,6 +8,12 @@
   1) check_quotes   D 维度：原文依据是否在转录中逐字存在（字符串匹配，硬结论）
   2) slice_scan     A 维度：按人切片 + 规则扫描，只输出“候选”，不下“遗漏”结论
   3) soft 标记      B 维度辅助：标出含软要求词的句子，供人工/模型判断
+
+v1.2 修正（对照第 2 组公开实录的 5 条误报）：
+  - 规则①程序性动词句（邀请/出席/介绍/回答/讲到）整句排除
+  - 规则②两个以上人名 + 冒号引出的名单句整句排除
+  - 规则③责任落在机构（财政部/我们/相关部门）时单列“机构主体清单”，
+    用“机构（个人待确认）”占位，不进入候选表、不计精确率
 
 v1.1 修正（对照 v1.0 首轮 17 条候选的噪声）：
   - 参会人解析不再按中文逗号切分，避免把职务括号切碎
@@ -54,6 +60,17 @@ SOFT_RE = re.compile(r"(建议|可以考虑|可以|要不|最好|我觉得|要�
 ACK_RE = re.compile(r"^(好|对|行|可以|明白|嗯|收到|没问题)")
 
 LEADER_RE = r"[^，。；]{0,4}(牵头|负责|主导)"
+
+# v1.2 三条排除规则用到的词典
+PROCEDURAL_RE = re.compile(r"(邀请|出席|参加|介绍|回答|讲到|提到|感谢|欢迎|主持)")
+ROLLCALL_RE = re.compile(r"(还有|的有|出席|参加|邀请)[：:]")
+ASSIGN_AFTER_NAME = r"[^，。；]{0,6}(做|出|写|发|整理|确认|准备|跟进|补齐|统一|落实|推进|完成)"
+ORG_RE = re.compile(r"(财政部|我部|我们|有关部门|相关部门|各部门|各部委)")
+ORG_COMMIT_RE = re.compile(
+    r"(必须|确保|务必|完成|落实|下达|出台|印发|建立|推动|加快|抓好|做好"
+    r"|研究|推进|发行|统一|扩大|完善)"
+)
+PAST_RE = re.compile(r"(今年以来|近年来|近几年|去年|过去|此前|已经|曾经|早前|原来)")
 
 
 def strip_recipients(text):
@@ -196,16 +213,90 @@ def coverage(row, person, ctx, names):
     return long_common(task, ctx) >= 4 or ratio >= 0.3
 
 
+def is_procedural(text, names):
+    """v1.2 规则①：程序性动词句。
+
+    发布会/宣讲会里“邀请某人介绍情况”“回答记者提问”“刚才都讲到了”，
+    有动词、有人名，但没有活。判据：含程序性动词 + 无“你”指派 +
+    没有“点名的人紧跟动作”的结构。
+    """
+    if not PROCEDURAL_RE.search(text):
+        return False
+    if "你" in strip_recipients(text):
+        return False
+    for nm in names:
+        if re.search(re.escape(nm) + ASSIGN_AFTER_NAME, text):
+            return False
+    return True
+
+
+def is_rollcall(text, names):
+    """v1.2 规则②：名单句。
+
+    “出席今天新闻发布会的还有：廖岷先生，王东伟先生，郭婷婷女士。”
+    两个以上人名、以冒号引出、无独立动作，整句排除。
+    """
+    if len([nm for nm in names if nm in text]) < 2:
+        return False
+    for nm in names:
+        # “参加的有张三，张三你去对接”这类句子里带指派，不能当名单句排掉
+        if re.search(re.escape(nm) + ASSIGN_AFTER_NAME, text):
+            return False
+    return bool(ROLLCALL_RE.search(text))
+
+
+def org_covered(org, rows):
+    """机构句是否已被表内条目覆盖，避免与表重复计数。"""
+    text = org["句"]
+    for r in rows:
+        task = (r.get("任务") or "") + (r.get("约束") or "")
+        tb = bigrams(task)
+        if not tb:
+            continue
+        if long_common(task, text) >= 4 or len(tb & bigrams(text)) / len(tb) >= 0.4:
+            return True
+    return False
+
+
+def org_subject(text, names, rows):
+    """v1.2 规则③：机构主体。
+
+    责任落在“财政部/我们/相关部门”而不是任何个人时，此前整句失明
+    （第 2 组郭婷婷 12 句零候选就是这种情况）。改为单列清单：
+    只收含承诺动词、未点名个人、未被表覆盖的句子，人物记“机构（个人待确认）”，
+    不进入候选表，不计入精确率。
+    """
+    if "你" in text or any(nm in text for nm in names):
+        return None
+    if PAST_RE.search(text[:12]):
+        return None  # 回顾性陈述（“今年以来我们认真落实……”）不是待办
+    m = ORG_RE.search(text)
+    if not m or not ORG_COMMIT_RE.search(text):
+        return None
+    org = {"人物": "机构（个人待确认）", "主体": m.group(1), "句": text,
+           "时间": (TIME_RE.search(text).group(1) if TIME_RE.search(text) else "无")}
+    if org_covered(org, rows):
+        return None
+    return org
+
+
 def slice_scan(names, sentences, rows):
-    """按人切片，输出候选与低置信池（都只是候选，不是结论）"""
-    cands, low = [], []
+    """按人切片：输出个人候选、低置信池、机构主体清单（都只是候选，不是结论）"""
+    cands, low, orgs = [], [], []
     for idx, s in enumerate(sentences):
         text = s["text"]
         if not any(v in text for v in VERBS):
             continue
+        # v1.2 规则①②：程序性句与名单句在归属判定之前整句排除
+        if is_procedural(text, names) or is_rollcall(text, names):
+            continue
         ctx = (sentences[idx - 1]["text"] if idx else "") + text
         people = persons_in(s, names)
         if not people:
+            # v1.2 规则③：责任在机构时单列，不再整句丢弃
+            org = org_subject(text, names, rows)
+            if org:
+                orgs.append(org)
             continue
         leaders = {nm for nm in names
                    if re.search(re.escape(nm) + LEADER_RE, text)}
@@ -230,7 +321,7 @@ def slice_scan(names, sentences, rows):
             item = {"人物": p, "句": text, "置信度": conf, "备注": note,
                     "时间": (TIME_RE.search(text).group(1) if has_time else "无")}
             (cands if conf in ("高", "中") else low).append(item)
-    return cands, low
+    return cands, low, orgs
 
 
 # ---------------------------------------------------------------- 内置示例表
@@ -295,7 +386,7 @@ def main():
     print()
 
     print("## A 通道：按人切片候选（只出候选，不下结论）")
-    cands, low = slice_scan(names, sentences, rows)
+    cands, low, orgs = slice_scan(names, sentences, rows)
     print("| 序号 | 人物 | 时间线索 | 置信度 | 原文 | 备注 |")
     print("|---|---|---|---|---|---|")
     for i, c in enumerate(cands, 1):
@@ -303,6 +394,14 @@ def main():
     print(f"\n候选 {len(cands)} 条；低置信池 {len(low)} 条（需人工过目，不进入候选表）")
     for c in low:
         print(f"- [低] {c['人物']}｜{c['句']}")
+    print()
+
+    print("## 机构主体清单（责任在机构而非个人，单列，不进入候选表、不计精确率）")
+    print("| 序号 | 主体 | 时间线索 | 原文 |")
+    print("|---|---|---|---|")
+    for i, o in enumerate(orgs, 1):
+        print(f"| {i} | {o['主体']} | {o['时间']} | {o['句']} |")
+    print(f"\n机构主体 {len(orgs)} 条；仅作提醒，采纳权在用户")
     print()
 
     print("## 切片视图（按人重排，供人工复核）")
