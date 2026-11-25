@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""会议待办质检辅助工具 v1.2
+"""会议待办质检辅助工具 v1.3
 
 设计原则：只做机器能给出硬证据的部分，不假装能判断语义。
 三个通道，分别对应质检的 D / A / B 维度：
@@ -8,6 +8,13 @@
   1) check_quotes   D 维度：原文依据是否在转录中逐字存在（字符串匹配，硬结论）
   2) slice_scan     A 维度：按人切片 + 规则扫描，只输出“候选”，不下“遗漏”结论
   3) soft 标记      B 维度辅助：标出含软要求词的句子，供人工/模型判断
+
+v1.3 修正（对照第 4 组真实内部会议：单字代称脱敏）：
+  - 说话人标签正则由 2–4 字放宽为 1–4 字。此前“甲：/乙：”这类单字代称
+    完全不匹配，切句得 0 条、A 通道静默失效，而 D 通道照常输出 9/9——
+    最危险的是它不报错，还看起来正常。
+  - 名单校验保留（名字须出现在“参会人：”行内），避免“说明：/主持：”
+    等元信息行被误认成发言。
 
 v1.2 修正（对照第 2 组公开实录的 5 条误报）：
   - 规则①程序性动词句（邀请/出席/介绍/回答/讲到）整句排除
@@ -99,7 +106,7 @@ def parse_transcript(path):
                     names.append(nm)
             break
     for line in lines:
-        m = re.match(r"^([\u4e00-\u9fa5]{2,4})[：:](.*)$", line.strip())
+        m = re.match(r"^([\u4e00-\u9fa5]{1,4})[：:](.*)$", line.strip())
         if m and m.group(1) in names:
             for sent in re.split(r"(?<=[。！？；])", m.group(2).strip()):
                 if sent.strip():
@@ -130,11 +137,25 @@ def build_sentences(body):
     return out
 
 
+INVITEE_RE = re.compile(
+    r"把[^。！？；]{0,30}?(?:都)?叫上|(?:和|与|跟)[\u4e00-\u9fa5]{1,4}一起"
+)
+
+
+def strip_invitees(text):
+    """v1.3 规则④：剥离“把 X 和 Y 都叫上”“和 X 一起”里的参会对象。
+
+    被召集人和协同方不是责任人。第 4 组实测：主持人说“把产品负责人和丙
+    都叫上”，丙被误判成“被指派拉会”，产出一条唯一也是误报的候选。
+    """
+    return INVITEE_RE.sub("", text)
+
+
 def persons_in(sent_obj, names):
-    """抽取句子里的责任人：显式点名 + 被指派的“你”，排除接收方。"""
+    """抽取句子里的责任人：显式点名 + 被指派的“你”，排除接收方与参会对象。"""
     text = sent_obj["text"]
     found = set()
-    cleaned = strip_recipients(text)
+    cleaned = strip_invitees(strip_recipients(text))
     for nm in names:
         if nm in cleaned:
             found.add(nm)
