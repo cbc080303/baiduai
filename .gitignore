@@ -5,3 +5,6 @@
 .dumate/
 __pycache__/
 *.pyc
+
+# 本地访问凭据，禁止提交
+.token

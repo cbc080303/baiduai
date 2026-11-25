@@ -68,26 +68,32 @@ python agreement.py 双人标注_标注员A.csv 双人标注_标注员B.csv
 - 第 3 组暴露的硬伤：真实 ASR 数据的说话人标签是**段落级**（40 个标签覆盖 145 句，约 27% 粒度），会让切片整体失真；ASR 错字（"哑剧"应为"牙具"）会让逐字引用把噪声固化进证据链。
 - **数据性质**：第 1 组为构造语料（人物虚构），用于演示方法；真实内部会议的召回率与字段准确率**尚未验证**，验证设计与工具已备好（见附录 B.6）。
 
-## 怎么托管成公网链接（三选一）
+## 已上线的公网地址
 
-**方式 A · GitHub Pages（最省事）**
+**演示页：<https://cbc080303.github.io/baiduai/>**
 
-1. 在 GitHub 新建一个仓库（Public），名字随意，如 `meeting-todo-qc`。
-2. 网页上直接上传 `index.html`（GitHub 支持拖拽上传，不必装 git）。
-3. 仓库 Settings → Pages → Source 选 `Deploy from a branch` → 分支 `main`、目录 `/root` → Save。
-4. 约 1 分钟后访问 `https://<你的用户名>.github.io/meeting-todo-qc/`。
+仓库：`https://github.com/cbc080303/baiduai`（Public，`main` 分支根目录放置 `index.html`，GitHub Pages 已启用）
 
-> 若已装 git 并配置好 SSH/Token，也可以本地推：
-> ```bash
-> git init && git add index.html && git commit -m "会议待办质检器演示页"
-> git branch -M main && git remote add origin <你的仓库地址> && git push -u origin main
-> ```
+验收记录（2026-11-25 19:24 实测）：站点 HTTP 200、返回 49,525 字节、去尾部空白后与本地 `index.html` 逐字一致、页面含 `id="run-a"` 与 `A_CHANNEL`（即「查遗漏候选（A）」按钮与前端实现已随页面上线）。
 
-**方式 B · 百度秒哒 / 飞书妙搭**：在平台上新建应用，把 `index.html` 内容作为静态页面发布，取得平台链接。适合比赛要求"平台内可访问"的场景。
+### 如果链接失效，怎么重新上线
 
-**方式 C · 不托管**：直接提交 `index.html` 附件，答辩现场本地双击打开。演示页零外链，断网也能跑——这反而是它最稳的地方。
+**方式 A · 网页直接上传（4 步）**
 
-**答辩前建议**：不管用哪种方式，都把演示页**本机打开一遍**，确认按钮、表格横向滚动、窄屏布局正常。再准备一张运行截图，防止现场网络问题。
+1. 打开 `https://github.com/cbc080303/baiduai`；
+2. 点 `uploading an existing file`，把 `index.html` 拖进去，点 `Commit changes`；
+3. `Settings` → `Pages` → Source 选 `Deploy from a branch`，**Branch 下拉手动改成 `main`（默认是 `None`，这是最常踩的坑）**，目录 `/ (Root)` → `Save`；
+4. 约 1 分钟后访问 `https://cbc080303.github.io/baiduai/`。
+
+**方式 B · 用 token 走 API（无需浏览器点击）**
+
+把有 `repo` 权限的 token 存到同目录 `.token` 文件，执行 `python open_pages.py`，脚本会开通 Pages 并轮询验证站点，用完请删除 `.token` 并撤销 token。
+
+**方式 C · 百度秒哒 / 飞书妙搭**：在平台上新建应用，把 `index.html` 内容作为静态页面发布，取得平台链接。适合比赛要求"平台内可访问"的场景。
+
+**方式 D · 不托管**：直接提交 `index.html` 附件，答辩现场本地双击打开。演示页零外链，断网也能跑——这反而是它最稳的地方。
+
+**答辩前建议**：把线上地址与本机各打开一遍，确认按钮、表格横向滚动、窄屏布局正常；再截一张运行图，防止现场网络问题。
 
 ## 文件清单
 
