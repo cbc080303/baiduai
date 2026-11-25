@@ -17,3 +17,6 @@ deploy-pages.ps1
 deploy-pages.cmd
 open_pages.py
 .image_gen/
+
+# 成品报告 docx：随附件包分发，不入仓（体积 2.4MB）
+会议待办质检器_质检报告成品版.docx
