@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>会议待办质检 · 智能体使用页</title>
+<style>
+  :root{
+    --ink:#14181f; --muted:#5b6472; --faint:#68717d;
+    --line:#e4e8ef; --line-strong:#cdd4e0;
+    --bg:#f6f7f9; --card:#fff;
+    --accent:#14548c; --accent-soft:#eaf1f8;
+    --ok:#067647; --ok-bg:#e9f6ef;
+    --p1:#b54708; --p1-bg:#fdf4e7;
+    --radius:10px;
+    --shadow:0 1px 2px rgba(16,24,40,.05),0 1px 3px rgba(16,24,40,.06);
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0;background:var(--bg);color:var(--ink);
+    font-family:"PingFang SC","Microsoft YaHei","Hiragino Sans GB","Source Han Sans SC",system-ui,-apple-system,sans-serif;
+    font-size:15px;line-height:1.65;font-variant-numeric:tabular-nums;
+  }
+  a{color:var(--accent)}
+  :focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+  .wrap{max-width:900px;margin:0 auto;padding:0 24px}
+  header.top{border-bottom:1px solid var(--line);background:#fff}
+  .topbar{display:flex;align-items:center;gap:16px;height:56px;max-width:900px;margin:0 auto;padding:0 24px}
+  .brand{font-weight:600}
+  .brand span{color:var(--faint);font-weight:400;margin-left:8px;font-size:13px}
+  .nav{margin-left:auto;font-size:13.5px}
+  .nav a{color:var(--muted);text-decoration:none}
+  .nav a:hover{color:var(--ink)}
+  .hero{padding:38px 0 26px;border-bottom:1px solid var(--line);background:#fff}
+  .eyebrow{font-size:12.5px;letter-spacing:.1em;color:var(--accent);margin:0 0 10px}
+  h1{font-size:27px;line-height:1.3;margin:0 0 10px;font-weight:650}
+  .lede{color:var(--muted);margin:0;max-width:66ch}
+  section{padding:34px 0;border-bottom:1px solid var(--line)}
+  h2{font-size:19px;margin:0 0 12px;font-weight:640}
+  .sub{color:var(--muted);margin:0 0 16px}
+  .steps{display:grid;gap:12px;grid-template-columns:repeat(3,1fr);margin:0}
+  .step{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:14px 16px;box-shadow:var(--shadow)}
+  .step .n{font-size:12px;color:var(--accent);font-weight:600;letter-spacing:.08em}
+  .step .t{font-weight:600;margin:4px 0 6px}
+  .step .d{font-size:13px;color:var(--muted);line-height:1.6}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:16px 18px;box-shadow:var(--shadow)}
+  .card + .card{margin-top:12px}
+  .card h3{font-size:15px;margin:0 0 8px;font-weight:640}
+  .card p{margin:0 0 8px;font-size:13.5px;color:var(--muted)}
+  .card p:last-child{margin-bottom:0}
+  code{background:var(--accent-soft);padding:1px 5px;border-radius:4px;font-size:12.5px}
+  .toolbar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:0 0 10px}
+  .btn{font:inherit;font-size:13.5px;padding:8px 13px;min-height:38px;border-radius:8px;border:1px solid var(--line-strong);background:#fff;color:var(--ink);cursor:pointer}
+  .btn:hover{border-color:var(--accent);color:var(--accent)}
+  .btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+  .btn.primary:hover{background:#0f4270;color:#fff}
+  .hint{font-size:12.5px;color:var(--faint)}
+  pre.prompt{
+    margin:0;background:#fff;border:1px solid var(--line);border-radius:var(--radius);
+    padding:16px 18px;max-height:520px;overflow:auto;font-size:12.8px;line-height:1.7;
+    font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace;
+    white-space:pre-wrap;word-break:break-word;color:#1f2733;
+  }
+  .badge{display:inline-block;font-size:12px;padding:2px 8px;border-radius:999px;background:var(--ok-bg);color:var(--ok);margin-left:6px}
+  .warn{background:var(--p1-bg);border:1px solid #f0d9b5;color:#7a4a08;border-radius:8px;padding:12px 14px;font-size:13px}
+  .warn b{color:#5c3606}
+  ul.tight{margin:8px 0 0;padding-left:20px;font-size:13.5px;color:var(--muted)}
+  ul.tight li{margin:4px 0}
+  footer{padding:26px 0 40px;color:var(--faint);font-size:12.5px}
+  footer a{color:var(--muted)}
+  @media (max-width:760px){
+    .steps{grid-template-columns:1fr}
+    h1{font-size:23px}
+    .topbar{padding:0 16px}
+    .wrap{padding:0 16px}
+  }
+</style>
+</head>
+<body>
+<header class="top">
+  <div class="topbar">
+    <div class="brand">会议待办质检 · 智能体 <span>在搭子里跑一次</span></div>
+    <nav class="nav"><a href="index.html">← 返回作品演示页</a></nav>
+  </div>
+</header>
+
+<main id="main">
+  <div class="hero">
+    <div class="wrap">
+      <p class="eyebrow">办公协同与组织效率 · 参赛作品</p>
+      <h1>把会议转录交给它，拿回一张能直接用的待办表</h1>
+      <p class="lede">它是「会议待办质检」智能体：位置在纪要生成之后，判断已有待办准不准、缺不缺、能不能直接建进任务系统。往下走三步，就能用它跑一次自己的会议。</p>
+    </div>
+  </div>
+
+  <section>
+    <div class="wrap">
+      <h2>三步用起来</h2>
+      <p class="sub">两条路径，选一条即可。路径二不需要装任何东西，只要会用搭子的对话框。</p>
+      <div class="steps">
+        <div class="step">
+          <div class="n">STEP 1</div>
+          <div class="t">拿到提示词</div>
+          <div class="d">点下方「复制系统提示词」，整段复制。它就是这个智能体的全部设定，40 行左右。</div>
+        </div>
+        <div class="step">
+          <div class="n">STEP 2</div>
+          <div class="t">在搭子里建专家</div>
+          <div class="d">打开百度搭子 → 新建专家（或直接在对话里粘贴）→ 把提示词粘进去 → 保存。要装成正式插件，见下方「装成插件」。</div>
+        </div>
+        <div class="step">
+          <div class="n">STEP 3</div>
+          <div class="t">上传转录，开跑</div>
+          <div class="d">把会议转录（<code>张三：……</code> 格式）发给它。它会先确认三件事：有没有说话人标记、有没有现成待办表、要不要脱敏，然后给结论。</div>
+        </div>
+      </div>
+
+      <div class="card" style="margin-top:14px">
+        <h3>装成插件（可选，比粘贴提示词多两个能力）</h3>
+        <p>插件形态会带上下面的脚本与参考文档，能直接跑字符串校验、切片扫描、组织视图与一致率计算，不用让它临时写代码。</p>
+        <p>做法：下载 <a href="会议待办质检_智能体包.zip">会议待办质检_智能体包.zip</a>（8 个文件、约 33 KB），解压后把 <code>meeting-todo-qc</code> 整个文件夹放进搭子的插件目录：</p>
+        <p><code>&lt;用户数据目录&gt;/data/plugins/user/</code>　然后重启客户端。插件 <code>defaultEnabled</code> 为 true，装完自动启用。</p>
+        <p class="hint">Windows 上该目录通常在 <code>C:\Users\&lt;用户名&gt;\AppData\Roaming\qianfan-desktop-app\</code> 下面，路径里带一串编号与 <code>qianfan_desk_xdg</code>；macOS 在 <code>~/Library/Application Support/</code> 同类位置。找不到就用系统搜索找 <code>plugins/user</code>。</p>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="wrap">
+      <h2>系统提示词（完整，可复制） <span class="badge">40 行</span></h2>
+      <p class="sub">这段就是智能体的全部行为设定。它规定了起点（必须先拿到转录）、执行链路、五条口径红线与输出结构。</p>
+      <div class="toolbar">
+        <button class="btn primary" id="copy-prompt">复制系统提示词</button>
+        <span class="hint" id="copy-state" aria-live="polite"></span>
+      </div>
+<pre class="prompt" id="prompt"># 会议待办质检
+
+你是「会议待办质检」专家。你的位置在**纪要已经生成之后**：不重做纪要，而是判断已有待办准不准、缺不缺、能不能直接用。
+
+## 适用场景
+
+用户带来会议转录、会议纪要或待办清单，想确认这些待办是否可信时进入。不处理录音转写（那是另一个环节），也不处理从零撰写会议纪要。
+
+## 第一步：等待用户上传会议转录
+
+**这是硬性起点。不要假设工作区里已有转录文件，不要自己构造示例数据，也不要凭用户一句"帮我看看待办"就开始质检。**
+
+先请用户提供会议转录，并在这一步把三件事问清：
+
+1. **说话人标记**：转录是否带 `张三：……` 这类前缀。有标记才能做按人切片的遗漏检查；没有就告诉用户这一层不可用，不要悄悄降级。
+2. **是否已有待办表**：有就一起给（编号 / 任务 / 负责人 / 截止时间 / 约束 / 原文依据 六列）；没有就说清"我会先提取一版再审，但质检对象与提取方同源，这层局限要写进结论"。
+3. **脱敏**：真实会议涉密时先脱敏再粘贴，涉及人名、客户名、金额时提醒一次。
+
+拿到转录之前，只做确认与提示，不产出质检结论。
+
+## 收到转录之后
+
+按 `meeting-todo-qc` 技能的流程执行：确认输入形态 → D 依据逐字回查 → A 按人切片查遗漏候选 → C 字段完整性 → 修正建议 →（按需）组织视图与双人标注一致率。脚本在技能的 `scripts/` 下，用它们跑，不要用肉眼替代字符串匹配。
+
+## 口径红线
+
+- **只出候选，不下结论**：A 通道的产出必须写成"候选"，并把采纳权交回用户。
+- **"可直接执行"与"可直接建单"不是一回事**：前者指四个要件齐全，后者指能直接建进任务系统。分开说。
+- **不称 Kappa**：条目级标注算不出 Kappa 所需的期望一致率，只能说"条目一致率 + 字段一致率"。
+- **不编造字段**：负责人、截止时间在原文没有线索时保持"待确认"；会议里的动作时点（"周五我去锁场地"）不是这件事的截止时间。
+- **语料性质必须交代**：构造语料、公开实录都要标明；公开会议语料（发布会、论坛、访谈）几乎不含"人名 + 指派"结构，A 通道在上面会大面积误报，要说清是语料不适用而非技能失效。
+
+## 输出与风格
+
+先给结论再给依据，中文，分点，不用套话。质检结论按"结论 / 逐条明细 / 修正建议 / 边界"四段组织，每条问题都挂上依据原句；给不出依据的不要写进结论。
+
+用户问的是"能不能用"，不是"有没有问题"——所以最后要落到可执行的判断上：哪些可以直接建单，哪些需要补字段，哪些必须人工裁决。</pre>
+    </div>
+  </section>
+
+  <section>
+    <div class="wrap">
+      <h2>它做什么、不做什么</h2>
+      <div class="card">
+        <h3>会做的</h3>
+        <ul class="tight">
+          <li><b>D 依据逐字回查</b>：每条待办的「原文依据」能不能在转录里逐字找到，字符串匹配，给硬结论。</li>
+          <li><b>A 遗漏候选</b>：按人切片，把"被点名 + 有动作"的句子捞出来，逐条标注，<b>只出候选、不下结论</b>。</li>
+          <li><b>C 字段完整性</b>：负责人与截止时间的空值分布，区分"原文确实没有"和"原文有线索但被漏掉"。</li>
+          <li><b>修正建议与组织视图</b>：补 / 改 / 注三类建议；按人聚合负载、风险排序、补字段队列。</li>
+          <li><b>导入模板</b>：把修正版转成飞书任务 / 钉钉待办 / Teambition 三份模板。</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>不做的</h3>
+        <ul class="tight">
+          <li>不做录音转写，也不从零撰写会议纪要——那是另一个环节。</li>
+          <li>不替你判定"这条到底算不算任务"：边界情形给候选，采纳权在你。</li>
+          <li>不给你准确率：它只能给可执行率、一致率与单场召回，样本不够的绝不外推。</li>
+        </ul>
+      </div>
+      <div class="warn"><b>用之前知道一件事：</b>如果待办表是它自己提取的，那么"生成"和"质检"同源，A 维度会自我确认。要测真召回，请用别人的待办表，或自己逐句核一遍——第 4 组就是这么测出"候选 0 条但漏 1 条"的。</div>
+    </div>
+  </section>
+
+  <section>
+    <div class="wrap">
+      <h2>三种可以直接发的开场</h2>
+      <div class="card">
+        <p><code>这是我上周周会的转录（带说话人），帮我看这张待办表准不准，漏了哪些活。</code></p>
+        <p><code>这张待办表是从这份转录提的，帮我逐条核对「原文依据」能不能逐字找到。</code></p>
+        <p><code>会上派的活有没有漏？按人帮我查一遍，只要候选，别替我下结论。</code></p>
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    <div class="wrap">
+      <p>材料在 <a href="index.html">演示页</a> 与 <a href="会议待办质检器_提交附件包.zip">提交附件包</a> 里；本页零外链、可离线打开。</p>
+    </div>
+  </footer>
+</main>
+
+<script>
+(function(){
+  var btn = document.getElementById("copy-prompt");
+  var state = document.getElementById("copy-state");
+  var pre = document.getElementById("prompt");
+  function done(msg){ state.textContent = msg; setTimeout(function(){ state.textContent = ""; }, 2600); }
+  btn.addEventListener("click", function(){
+    var text = pre.textContent;
+    if (navigator.clipboard && navigator.clipboard.writeText){
+      navigator.clipboard.writeText(text).then(function(){ done("已复制 " + text.length + " 字符"); })
+        .catch(function(){ fallback(); });
+    } else { fallback(); }
+  });
+  function fallback(){
+    try{
+      var ta = document.createElement("textarea");
+      ta.value = pre.textContent;
+      ta.setAttribute("readonly", "");
+      ta.style.position = "fixed"; ta.style.left = "-9999px";
+      document.body.appendChild(ta);
+      ta.select();
+      var ok = document.execCommand("copy");
+      document.body.removeChild(ta);
+      done(ok ? "已复制 " + pre.textContent.length + " 字符" : "复制失败，请手动全选");
+    }catch(e){ done("复制失败，请手动全选"); }
+  }
+})();
+</script>
+</body>
+</html>
