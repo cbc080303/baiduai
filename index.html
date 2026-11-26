@@ -673,13 +673,21 @@ document.getElementById("clear-check").addEventListener("click", () => {
 });
 if (ignoreSpace) ignoreSpace.addEventListener("change", () => { if (trInput.value.trim()) runCheck(); });
 
-// ---------- A 通道：按人切片查遗漏（与 qc_tools.py v1.3 slice_scan 逐条对拍一致） ----------
+// ---------- A 通道：按人切片查遗漏（与 qc_tools.py v1.4 slice_scan 逐条对拍一致） ----------
 const A_CHANNEL = (function(){
   const VERBS = ["修","做","出","拉","拿","发","对","谈","确认","整理","补齐","统一",
     "安排","写","跟进","联系","准备","提测","上线","锁","催","排","复盘",
     "评估","对齐","盯","查","挪","落实","推进","补","打","电话"];
 
-  const TIME_RE = /(下周[一二三四五六日天]|本周[一二三四五六日天]|周[一二三四五六日天]前|下个月\s*\d+\s*[号日]?|\d+\s*月\s*第?[一二三四]?周|\d+\s*月\s*\d+\s*[日号]|今天|明天|后天|月底|月底前|下月初|评审会前|上线前|会前)/;
+  // v1.4 动作否决用词表（与 qc_tools.py 的 ACTION_EXTRA 逐字一致）
+  const ACTION_EXTRA = ["制作","公布","发布","起草","审核","审批","交付","设计","开发","测试",
+    "汇报","通知","统计","归档","招聘","培训","采购","报销","签约","结算",
+    "对账","投放","拍摄","剪辑","撰写","翻译","校对","排期","定价","盘点",
+    "调研","走访","拜访","谈判","催收","回访","报名","登记","录入","导入",
+    "备份","部署","巡检","排查","修复","核对","汇总","拆解","落地"];
+
+  const TIME_RE = /(下周[一二三四五六日天]|本周[一二三四五六日天]|周[一二三四五六日天]前|下个月\s*\d+\s*[号日]?|\d+\s*月\s*第?[一二三四]?周|\d+\s*月\s*\d+\s*[日号]|今天|明天|后天|月底|月底前|下月初|评审会前|上线前|会前)/g;
+  const TIME_RE1 = /(下周[一二三四五六日天]|本周[一二三四五六日天]|周[一二三四五六日天]前|下个月\s*\d+\s*[号日]?|\d+\s*月\s*第?[一二三四]?周|\d+\s*月\s*\d+\s*[日号]|今天|明天|后天|月底|月底前|下月初|评审会前|上线前|会前)/;
   const SOFT_RE = /(建议|可以考虑|可以|要不|最好|我觉得|要不要|是不是|如果|先不)/;
   const ACK_RE = /^(好|对|行|可以|明白|嗯|收到|没问题)/;
   const LEADER_RE = "[^，。；]{0,4}(牵头|负责|主导)";
@@ -691,12 +699,31 @@ const A_CHANNEL = (function(){
   const ORG_RE = /(财政部|我部|我们|有关部门|相关部门|各部门|各部委)/;
   const ORG_COMMIT_RE = /(必须|确保|务必|完成|落实|下达|出台|印发|建立|推动|加快|抓好|做好|研究|推进|发行|统一|扩大|完善)/;
   const PAST_RE = /(今年以来|近年来|近几年|去年|过去|此前|已经|曾经|早前|原来)/;
+  // v1.4 规则⑥回溯词
+  const RECAP_HINT_RE = /(之前|上次|那次|是不是|有没有|还记得|刚才说)/;
 
   // v1.3 规则④：参会对象（“把 X 和 Y 都叫上”“和 X 一起”）不是责任人
-  // 第 4 组实测：主持人说“把产品负责人和丙都叫上”，丙被误判成“丙被指派拉会”
   const INVITEE_RE = /把[^。！？；]{0,30}?(?:都)?叫上|(?:和|与|跟)[\u4e00-\u9fa5]{1,4}一起/;
 
   const escRe = s => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+  // 动作词：VERBS + ACTION_EXTRA，保序去重后按长度降序（与 Python _act_words 同算法）
+  const ACT_RE = (function(){
+    const seen = {}, out = [];
+    VERBS.concat(ACTION_EXTRA).forEach(w => {
+      if (!Object.prototype.hasOwnProperty.call(seen, w)){ seen[w] = 1; out.push(w); }
+    });
+    const ordered = out.map((w, i) => [w, i])
+      .sort((a, b) => (b[0].length - a[0].length) || (a[1] - b[1]))
+      .map(x => x[0]);
+    return new RegExp(ordered.map(escRe).join("|"), "g");
+  })();
+
+  function actions(text){
+    const t = String(text || "");
+    const m = t.match(ACT_RE);
+    return new Set(m || []);
+  }
 
   function stripRecipients(text){
     let t = text.split("给我们").join("").split("给我").join("");
@@ -803,8 +830,22 @@ const A_CHANNEL = (function(){
     if ((row["负责人"] || "").indexOf("待确认") >= 0) return false;
     if (ownersOf(row, names).indexOf(person) < 0) return false;
     const task = (row["任务"] || "") + (row["约束"] || "");
+    const taskOnly = row["任务"] || "";
     const dl = row["截止时间"] || "";
     if (dl && dl !== "待确认" && ctx.indexOf(dl) >= 0) return true;
+
+    // v1.4 动作否决：任务列含成果动词、且与候选句一个都不共享 → 不是同一件事。
+    // 第 4 组的真遗漏就是这样被吞掉的：第 9 条是“制作第二批素材”，
+    // 漏掉的那句是“在群里公布日期”，二 gram 相似度却很高。
+    const ta = actions(taskOnly), ca = actions(ctx);
+    let hasExtra = false;
+    ta.forEach(w => { if (ACTION_EXTRA.indexOf(w) >= 0) hasExtra = true; });
+    if (hasExtra && ca.size){
+      let common = false;
+      ta.forEach(w => { if (ca.has(w)) common = true; });
+      if (!common) return false;
+    }
+
     const tb = bigrams(task), sb = bigrams(ctx);
     let inter = 0;
     tb.forEach(b => { if (sb.has(b)) inter++; });
@@ -831,6 +872,22 @@ const A_CHANNEL = (function(){
     return ROLLCALL_RE.test(text);
   }
 
+  // v1.4 规则⑤：主持人复述句（多人名 + 长句；动作词稀疏，靠形态判）
+  function isRecap(text, names){
+    const people = names.filter(nm => text.indexOf(nm) >= 0).length;
+    if (people < 2) return false;
+    if (people >= 3 && text.length >= 25) return true;
+    if (actions(text).size < 3) return false;
+    const t = text.match(TIME_RE);
+    return (t ? t.length : 0) >= 2;
+  }
+
+  // v1.4 规则⑥：回溯疑问句（“乙你之前是不是整理过一个版本？”）——问过去，不派活
+  function isLookback(text){
+    if (!RECAP_HINT_RE.test(text)) return false;
+    return !TIME_RE1.test(text);
+  }
+
   // v1.2 规则③：机构句是否已被表内条目覆盖，避免与表重复计数
   function orgCovered(org, rows){
     const text = org["句"];
@@ -851,7 +908,7 @@ const A_CHANNEL = (function(){
     if (PAST_RE.test(text.slice(0, 12))) return null;
     const m = ORG_RE.exec(text);
     if (!m || !ORG_COMMIT_RE.test(text)) return null;
-    const tm = TIME_RE.exec(text);
+    const tm = TIME_RE1.exec(text);
     const org = {"人物": "机构（个人待确认）", "主体": m[1], "句": text, "时间": tm ? tm[1] : "无"};
     if (orgCovered(org, rows)) return null;
     return org;
@@ -862,8 +919,9 @@ const A_CHANNEL = (function(){
     sentences.forEach((s, idx) => {
       const text = s.text;
       if (!VERBS.some(v => text.indexOf(v) >= 0)) return;
-      // 规则①②：程序性句与名单句在归属判定之前整句排除
-      if (isProcedural(text, names) || isRollcall(text, names)) return;
+      // 规则①②⑤⑥：程序性句、名单句、复述句、回溯句在归属判定之前整句排除
+      if (isProcedural(text, names) || isRollcall(text, names) ||
+          isRecap(text, names) || isLookback(text)) return;
       const ctx = (idx ? sentences[idx - 1].text : "") + text;
       const people = personsIn(s, names);
       if (people.size === 0){
@@ -873,7 +931,7 @@ const A_CHANNEL = (function(){
         return;
       }
       const leaders = new Set(names.filter(nm => new RegExp(escRe(nm) + LEADER_RE).test(text)));
-      const tm = TIME_RE.exec(text);
+      const tm = TIME_RE1.exec(text);
       const hasTime = !!tm;
       const st = stripRecipients(text);
       const explicit = st.indexOf("你") >= 0 || text.indexOf("必须") >= 0 || text.indexOf("之前") >= 0;

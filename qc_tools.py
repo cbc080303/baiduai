@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""会议待办质检辅助工具 v1.3
+"""会议待办质检辅助工具 v1.4
 
 设计原则：只做机器能给出硬证据的部分，不假装能判断语义。
 三个通道，分别对应质检的 D / A / B 维度：
@@ -8,6 +8,18 @@
   1) check_quotes   D 维度：原文依据是否在转录中逐字存在（字符串匹配，硬结论）
   2) slice_scan     A 维度：按人切片 + 规则扫描，只输出“候选”，不下“遗漏”结论
   3) soft 标记      B 维度辅助：标出含软要求词的句子，供人工/模型判断
+
+v1.4 修正（对照第 4 组 v1.3 的沉默型漏检：同句两动作被覆盖判断吸收）：
+  - 覆盖判断改用「任务」列（不含约束列）的动作词做否决：任务含成果类动词
+    （制作/公布/起草/交付…）、候选句一个动作词都不共享 → 判“不是同一件事”，
+    不再算覆盖。此前“制作第二批素材”把同句的“在群里公布日期”吞掉了。
+  - 否决只在任务列含 ACTION_EXTRA 成果动词时启用，泛动词（对/补/盯/查）
+    在同一件事的不同句里常见，用它们否决会误伤已覆盖项。
+  - 任一侧抽不出动作词时退回原二 gram 逻辑。
+  - 句级规则⑤主持人复述句（三人以上 + 长句，动作词稀疏，靠形态判）。
+  - 句级规则⑥回溯疑问句（“乙你之前是不是整理过一个版本？”——问过去，不派活）。
+  - 效果：第 4 组候选 0 → 1（召回 1/1，但同句多人时人物按句级判，要人工改判）；
+    示例 4 条、第 2 组 0 条 + 4 机构主体，三组基线均未动。
 
 v1.3 修正（对照第 4 组真实内部会议：单字代称脱敏）：
   - 说话人标签正则由 2–4 字放宽为 1–4 字。此前“甲：/乙：”这类单字代称
@@ -185,6 +197,33 @@ def check_quotes(rows, transcript_text):
 # ---------------------------------------------------------------- 通道 2：切片扫描
 
 
+# v1.4 动作否决用词表：VERBS 之外补上「任务」列里常见的成果类动词，
+# 让“制作素材”与“在群里公布日期”能被判成两件事，而不是靠字面相似度混为一谈。
+ACTION_EXTRA = [
+    "制作", "公布", "发布", "起草", "审核", "审批", "交付", "设计", "开发", "测试",
+    "汇报", "通知", "统计", "归档", "招聘", "培训", "采购", "报销", "签约", "结算",
+    "对账", "投放", "拍摄", "剪辑", "撰写", "翻译", "校对", "排期", "定价", "盘点",
+    "调研", "走访", "拜访", "谈判", "催收", "回访", "报名", "登记", "录入", "导入",
+    "备份", "部署", "巡检", "排查", "修复", "核对", "汇总", "拆解", "落地",
+]
+def _act_words():
+    """保序去重后再按长度降序，保证 JS 侧用同样算法能得到同一匹配优先级。"""
+    seen, out = set(), []
+    for w in VERBS + ACTION_EXTRA:
+        if w not in seen:
+            seen.add(w)
+            out.append(w)
+    return sorted(out, key=len, reverse=True)   # sorted 稳定，等长词保留原序
+
+
+ACT_RE = re.compile("|".join(_act_words()))
+
+
+def actions(text):
+    """抽取文本里的动作词（任务侧的“做什么”）。"""
+    return set(ACT_RE.findall(text or ""))
+
+
 def bigrams(s):
     s = re.sub(r"[^\u4e00-\u9fa5A-Za-z0-9]", "", s)
     return {s[i:i + 2] for i in range(len(s) - 1)} if len(s) > 1 else set()
@@ -225,9 +264,21 @@ def coverage(row, person, ctx, names):
         return False
 
     task = (row.get("任务") or "") + (row.get("约束") or "")
+    task_only = row.get("任务") or ""
     dl = row.get("截止时间") or ""
     if dl and dl != "待确认" and dl in ctx:
         return True
+
+    # v1.4 动作否决：先用「任务」列（不含约束）的动作词与候选句的动作词比对。
+    # 两边一个动作词都不共享，说明不是同一件事——即使字面高度重叠也不能算覆盖。
+    # 第 4 组的真遗漏就是这样被吞掉的：第 9 条是“制作第二批素材”，
+    # 而漏掉的那句是“在群里公布日期”，二 gram 相似度却很高。
+    # 任一侧抽不到动作词时退回原二 gram 逻辑，避免把短任务误否决。
+    ta, ca = actions(task_only), actions(ctx)
+    # 只在该任务含“成果类动词”（ACTION_EXTRA）时才启用否决：泛动词（对、补、盯、查）
+    # 在同一件事的不同句里很常见，用它们否决会把“补全退款规则”这类已覆盖项翻出来。
+    if (ta & set(ACTION_EXTRA)) and ca and not (ta & ca):
+        return False
 
     tb, sb = bigrams(task), bigrams(ctx)
     ratio = len(tb & sb) / len(tb) if tb else 0.0
@@ -264,6 +315,41 @@ def is_rollcall(text, names):
         if re.search(re.escape(nm) + ASSIGN_AFTER_NAME, text):
             return False
     return bool(ROLLCALL_RE.search(text))
+
+
+RECAP_HINT_RE = re.compile(r"(之前|上次|那次|是不是|有没有|还记得|刚才说)")
+
+
+def is_recap(text, names):
+    """v1.4 规则⑤：主持人复述句。
+
+    会议末尾主持人常把全场待办复述一遍（“乙小红书数据下周三，丙素材周五第一批，
+    丁价格机制周四盯……”）。这类句人名多、时间多、动作多，会同时命中多个切片，
+    但它是复述已列表项，不是新任务。判据：≥2 个人名 + ≥2 个时间线索 + ≥3 个动作词。
+    真实指派句通常只有一个人名和一个时限，不会被这条规则误伤。
+    """
+    people = len([nm for nm in names if nm in text])
+    if people < 2:
+        return False
+    # 复述句的动作词很稀：主持人念的是“乙小红书数据下周三，丙素材周五第一批”，
+    # 动词几乎全省，靠动作词数量判不出来。改看「多人名 + 长句」这个形态特征。
+    if people >= 3 and len(text) >= 25:
+        return True
+    if len(actions(text)) < 3:
+        return False
+    return len(TIME_RE.findall(text)) >= 2
+
+
+def is_lookback(text):
+    """v1.4 规则⑥：回溯疑问句。
+
+    “退款规则那个事，乙你之前是不是整理过一个版本？”——问的是过去做过什么，
+    不是派活。判据：含回溯词，且整句没有任何时间线索（有“下周/周五”这类时限的
+    句子不排除，那通常是真指派）。
+    """
+    if not RECAP_HINT_RE.search(text):
+        return False
+    return not TIME_RE.search(text)
 
 
 def org_covered(org, rows):
@@ -308,8 +394,10 @@ def slice_scan(names, sentences, rows):
         text = s["text"]
         if not any(v in text for v in VERBS):
             continue
-        # v1.2 规则①②：程序性句与名单句在归属判定之前整句排除
-        if is_procedural(text, names) or is_rollcall(text, names):
+        # v1.2 规则①② + v1.4 规则⑤⑥：程序性句、名单句、主持人复述句、回溯疑问句
+        # 在归属判定之前整句排除；这些句子有人名也有动词，但都不是新派活
+        if (is_procedural(text, names) or is_rollcall(text, names)
+                or is_recap(text, names) or is_lookback(text)):
             continue
         ctx = (sentences[idx - 1]["text"] if idx else "") + text
         people = persons_in(s, names)
