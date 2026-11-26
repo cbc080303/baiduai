@@ -529,7 +529,7 @@ var RECORDER = (function () {
       preview: $("rec-preview"), status: $("rec-status"),
       send: $("rec-send"), save: $("rec-save"), dlTxt: $("rec-dl-txt"), dlAudio: $("rec-dl-audio"),
       dlZip: $("rec-dl-zip"), list: $("rec-list"), load: $("rec-load"), del: $("rec-del"),
-      clear: $("rec-clear"), clearAll: $("rec-clear-all"), unsupported: $("rec-unsupported")
+      clear: $("rec-clear"), clearAll: $("rec-clear-all"), floatBtn: $("rec-float"), unsupported: $("rec-unsupported")
     };
     if (!el.preview) return null;      // 页面没这块就安静退出，不影响其它功能
 
@@ -555,6 +555,7 @@ var RECORDER = (function () {
     var rec = makeRecorder({
       onTick: function (secs) {
         if (el.time) el.time.textContent = clock(secs);
+        refreshFloat();
       },
       onLevel: function (lvl) { paintLevel(lvl); },
       onState: function (s) {
@@ -645,6 +646,7 @@ var RECORDER = (function () {
         }
       }
       refreshSpeakers();
+      refreshFloat();
     }
 
     function currentAt() {
@@ -655,11 +657,25 @@ var RECORDER = (function () {
       if (!el.line) return;
       var text = oneLine(el.line.value);
       if (!text) { el.line.focus(); return; }
-      var at = currentAt();
-      append({ at: at == null ? state.duration : at, speaker: speaker(), text: text });
+      submitText(text, speaker());
       el.line.value = "";
       el.line.focus();
-      setStatus("记下 1 条（共 " + state.turns.filter(function (t) { return !t.mark; }).length + " 条）");
+    }
+
+    // 页面与浮窗共用同一条写入路径：浮窗里记的一条，和页面里记的完全等价
+    function submitText(text, who) {
+      var t = oneLine(text || "");
+      if (!t) return false;
+      var at = currentAt();
+      append({ at: at == null ? state.duration : at, speaker: who, text: t });
+      setStatus("记下 1 条（共 " + state.turns.filter(function (x) { return !x.mark; }).length + " 条）");
+      return true;
+    }
+
+    function markNow(note) {
+      var at = currentAt();
+      append({ at: at == null ? state.duration : at, mark: note || "打点" });
+      setStatus("已打点" + (note ? "：" + note : ""));
     }
 
     if (el.start) el.start.addEventListener("click", function () {
@@ -702,10 +718,123 @@ var RECORDER = (function () {
 
     if (el.mark) el.mark.addEventListener("click", function () {
       var note = el.markNote ? el.markNote.value.trim() : "";
-      var at = currentAt();
-      append({ at: at == null ? state.duration : at, mark: note || "打点" });
+      markNow(note);
       if (el.markNote) el.markNote.value = "";
-      setStatus("已打点" + (note ? "：" + note : ""));
+    });
+
+    /* ---------------- 浮窗：会议软件全屏时也能记 ---------------- */
+
+    // 置顶小窗（Document Picture-in-Picture）里没有宿主页面的 CSS，样式必须自带一份内联文本，
+    // 这样仍是零外链；不支持 PiP 的浏览器退化成“记录卡吸顶”，不是假装成功。
+    var FLOAT_CSS = [
+      "html,body{margin:0;height:100%}",
+      "body{font:13px/1.6 system-ui,-apple-system,'Segoe UI','Microsoft YaHei',sans-serif;color:#14181f;background:#fff}",
+      ".rec-float-panel{padding:12px;height:100%;box-sizing:border-box;display:flex;flex-direction:column;gap:8px}",
+      ".rf-head{display:flex;align-items:center;gap:10px}",
+      ".rf-head b{font:600 20px/1 ui-monospace,Consolas,monospace;font-variant-numeric:tabular-nums}",
+      ".rf-head span{font-size:12px;color:#5b6572;margin-right:auto}",
+      ".rf-head button{width:auto;padding:6px 10px;border:1px solid #cfd6e2;border-radius:6px;background:#f6f8fb;font:inherit;cursor:pointer}",
+      ".rec-float-panel input,.rec-float-panel textarea{width:100%;box-sizing:border-box;font:inherit;font-size:16px;padding:8px 10px;border:1px solid #cfd6e2;border-radius:8px;background:#fff;color:inherit}",
+      ".rec-float-panel textarea{min-height:88px;resize:vertical}",
+      ".rf-row{display:flex;gap:8px}",
+      ".rf-row button{flex:1;min-height:44px;border:1px solid #cfd6e2;border-radius:8px;background:#f6f8fb;font:inherit;font-weight:600;cursor:pointer}",
+      ".rf-row button#rf-say{background:#14548c;border-color:#14548c;color:#fff}",
+      "#rf-tip{margin:0;font-size:12px;color:#5b6572}"
+    ].join("");
+
+    var floatCtl = createFloat();
+
+    function createFloat() {
+      var pipWin = null, panel = null;
+      function supported() {
+        return typeof window !== "undefined" && window.documentPictureInPicture &&
+          typeof window.documentPictureInPicture.requestWindow === "function";
+      }
+      function q(sel) { return panel ? panel.querySelector(sel) : null; }
+      function build() {
+        if (panel) return panel;
+        panel = document.createElement("div");
+        panel.className = "rec-float-panel";
+        panel.innerHTML = '<div class="rf-head"><b id="rf-clock">00:00</b><span id="rf-count">0 条</span>' +
+          '<button type="button" id="rf-close">收起</button></div>' +
+          '<input id="rf-speaker" type="text" placeholder="当前说话人（可空）">' +
+          '<textarea id="rf-line" placeholder="记一条，回车提交；Shift+回车换行"></textarea>' +
+          '<div class="rf-row"><button type="button" id="rf-say">记一条</button>' +
+          '<button type="button" id="rf-mark">打点</button></div>' +
+          '<p id="rf-tip">录音和文字只在本机；成稿仍在上面的页面里</p>';
+        var say = q("#rf-say"), line = q("#rf-line"), mk = q("#rf-mark"), close = q("#rf-close");
+        if (say) say.addEventListener("click", function () { sayFromPanel(); });
+        if (mk) mk.addEventListener("click", function () { markNow(""); });
+        if (line) line.addEventListener("keydown", function (e) {
+          if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sayFromPanel(); }
+        });
+        if (close) close.addEventListener("click", function () {
+          if (pipWin) pipWin.close();
+          else document.body.classList.remove("rec-float-on");
+          setStatus("浮窗已收起，记录仍在页面里");
+        });
+        return panel;
+      }
+      function sayFromPanel() {
+        var line = q("#rf-line"), sp = q("#rf-speaker");
+        var text = line ? line.value : "";
+        var who = (sp && sp.value.trim()) ? sp.value.trim().replace(/[：:]/g, "") : speaker();
+        if (submitText(text, who) && line) { line.value = ""; line.focus(); }
+      }
+      function sync() {
+        if (!panel) return;
+        var c = q("#rf-clock"), n = q("#rf-count"), sp = q("#rf-speaker");
+        if (c) c.textContent = clock(rec.elapsed ? rec.elapsed() : 0);
+        if (n) n.textContent = state.turns.filter(function (t) { return !t.mark; }).length + " 条";
+        if (sp) sp.placeholder = "当前说话人" + (speaker() ? "（" + speaker() + "）" : "（可空）");
+      }
+      function stickyOn() {
+        document.body.classList.add("rec-float-on");
+        if (el.floatBtn) el.floatBtn.textContent = "取消吸附";
+      }
+      function open() {
+        if (!supported()) {
+          stickyOn();
+          setStatus("这个浏览器不支持置顶浮窗（Chrome / Edge 116+ 才有）；已把记录卡吸在页面顶部，滚到哪儿都能记。");
+          return Promise.resolve("sticky");
+        }
+        if (pipWin) { pipWin.close(); return Promise.resolve("closed"); }
+        return window.documentPictureInPicture.requestWindow({ width: 340, height: 380 }).then(function (win) {
+          pipWin = win;
+          var style = win.document.createElement("style");
+          style.textContent = FLOAT_CSS;
+          win.document.head.appendChild(style);
+          build();
+          win.document.body.appendChild(panel);
+          sync();
+          win.addEventListener("pagehide", function () {
+            if (panel && panel.parentNode) panel.parentNode.removeChild(panel);
+            pipWin = null;
+            if (el.floatBtn) el.floatBtn.textContent = "浮窗";
+            setStatus("浮窗已关闭，记录仍在页面里");
+          });
+          if (el.floatBtn) el.floatBtn.textContent = "关闭浮窗";
+          setStatus("浮窗已打开：会议软件全屏时也能记；录音与成稿仍在页面里");
+          return "pip";
+        }).catch(function (err) {
+          stickyOn();
+          setStatus("浮窗打开失败（" + (err && err.message ? err.message : "浏览器拒绝") + "），已把记录卡吸在页面顶部。");
+          return "failed";
+        });
+      }
+      return { supported: supported, open: open, sync: sync };
+    }
+
+    function refreshFloat() { if (floatCtl) floatCtl.sync(); }
+
+    if (el.floatBtn) el.floatBtn.addEventListener("click", function () {
+      if (document.body.classList.contains("rec-float-on")) {
+        document.body.classList.remove("rec-float-on");
+        el.floatBtn.textContent = "浮窗";
+        setStatus("已取消吸附");
+        return;
+      }
+      floatCtl.open();
     });
 
     function download(name, data, mime) {

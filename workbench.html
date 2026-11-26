@@ -139,6 +139,12 @@
   .rec-row{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-top:10px}
   #rec-mark-note{flex:1;min-width:150px;font:inherit;font-size:13px;padding:7px 10px;border:1px solid var(--line-strong);border-radius:8px;background:#fff;color:var(--ink)}
   .rec-store{border-top:1px dashed var(--line);padding-top:12px;margin-top:14px}
+  /* 视频会议卡：素材卡是一段等宽文本，别让长文件名或转写步骤把页面撑宽 */
+  .video-out{margin:12px 0 0;padding:11px 12px;background:#f6f8fb;border:1px solid var(--line);border-radius:8px;
+    font:12.5px/1.75 ui-monospace,SFMono-Regular,Consolas,monospace;color:var(--ink);white-space:pre-wrap;word-break:break-all}
+  .video-out:empty{display:none}
+  /* 浮窗的页面降级态：浏览器不支持置顶小窗时，把记录卡吸在顶部，滚到哪儿都能记 */
+  body.rec-float-on #rec{position:sticky;top:8px;z-index:30;box-shadow:0 10px 28px rgba(20,24,31,.14)}
   .rec-store .rec-label{font-size:12.5px;color:var(--muted)}
   #rec-list{flex:1;min-width:210px;font:inherit;font-size:13px;padding:7px 10px;border:1px solid var(--line-strong);border-radius:8px;background:#fff;color:var(--ink)}
   /* 打开方式条：电脑 / 手机 / 离线三条路，窄屏也不横滚 */
@@ -200,9 +206,20 @@
     <div class="row">
       <button class="primary" id="import-run">分拣并跑</button>
       <button id="import-file">选择文件</button>
-      <input type="file" id="import-files" accept=".txt,.md,.markdown,.csv,.tsv,.json" multiple hidden>
+      <input type="file" id="import-files" accept=".txt,.md,.markdown,.csv,.tsv,.json,.vtt,.srt" multiple hidden>
       <span class="status" id="import-status"></span>
     </div>
+  </div>
+
+  <div class="card video" id="video" style="grid-column:1/-1">
+    <h2><span class="idx" aria-hidden="true">V</span>视频会议 · 字幕与录像</h2>
+    <p class="hint">会议录像导出的字幕（<span class="mono">.vtt</span> / <span class="mono">.srt</span>）拖进来就直接变成可质检的转录——时间码与说话人都保留，实时字幕那种越滚越长的重复行会自动去重。录像（<span class="mono">.mp4</span> / <span class="mono">.mov</span> / <span class="mono">.webm</span>）只能读时长、分辨率与有无音轨，<b>本页不做语音识别</b>，会给转文字的两条路，不假装能出纪要。</p>
+    <div class="row">
+      <button class="primary" id="video-pick">选择字幕或录像</button>
+      <input type="file" id="video-files" accept=".vtt,.srt,.sbv,.mp4,.mov,.mkv,.webm,.m4a,.mp3,.wav" multiple hidden>
+      <span class="status" id="video-status" role="status" aria-live="polite"></span>
+    </div>
+    <pre class="video-out" id="video-out" hidden></pre>
   </div>
 
   <div class="card rec" id="rec" style="grid-column:1/-1">
@@ -216,6 +233,7 @@
           <button class="primary" id="rec-start">开始录音</button>
           <button id="rec-pause" disabled>暂停</button>
           <button id="rec-stop" disabled>结束</button>
+          <button id="rec-float" title="把记录面板弹到置顶小窗，会议软件全屏时也能记">浮窗</button>
           <span class="rec-clock"><span class="rec-dot" aria-hidden="true"></span><b id="rec-time">00:00</b></span>
         </div>
         <div class="rec-meter" id="rec-meter" aria-hidden="true"></div>
@@ -1293,7 +1311,7 @@ var RECORDER = (function () {
       preview: $("rec-preview"), status: $("rec-status"),
       send: $("rec-send"), save: $("rec-save"), dlTxt: $("rec-dl-txt"), dlAudio: $("rec-dl-audio"),
       dlZip: $("rec-dl-zip"), list: $("rec-list"), load: $("rec-load"), del: $("rec-del"),
-      clear: $("rec-clear"), clearAll: $("rec-clear-all"), unsupported: $("rec-unsupported")
+      clear: $("rec-clear"), clearAll: $("rec-clear-all"), floatBtn: $("rec-float"), unsupported: $("rec-unsupported")
     };
     if (!el.preview) return null;      // 页面没这块就安静退出，不影响其它功能
 
@@ -1319,6 +1337,7 @@ var RECORDER = (function () {
     var rec = makeRecorder({
       onTick: function (secs) {
         if (el.time) el.time.textContent = clock(secs);
+        refreshFloat();
       },
       onLevel: function (lvl) { paintLevel(lvl); },
       onState: function (s) {
@@ -1409,6 +1428,7 @@ var RECORDER = (function () {
         }
       }
       refreshSpeakers();
+      refreshFloat();
     }
 
     function currentAt() {
@@ -1419,11 +1439,25 @@ var RECORDER = (function () {
       if (!el.line) return;
       var text = oneLine(el.line.value);
       if (!text) { el.line.focus(); return; }
-      var at = currentAt();
-      append({ at: at == null ? state.duration : at, speaker: speaker(), text: text });
+      submitText(text, speaker());
       el.line.value = "";
       el.line.focus();
-      setStatus("记下 1 条（共 " + state.turns.filter(function (t) { return !t.mark; }).length + " 条）");
+    }
+
+    // 页面与浮窗共用同一条写入路径：浮窗里记的一条，和页面里记的完全等价
+    function submitText(text, who) {
+      var t = oneLine(text || "");
+      if (!t) return false;
+      var at = currentAt();
+      append({ at: at == null ? state.duration : at, speaker: who, text: t });
+      setStatus("记下 1 条（共 " + state.turns.filter(function (x) { return !x.mark; }).length + " 条）");
+      return true;
+    }
+
+    function markNow(note) {
+      var at = currentAt();
+      append({ at: at == null ? state.duration : at, mark: note || "打点" });
+      setStatus("已打点" + (note ? "：" + note : ""));
     }
 
     if (el.start) el.start.addEventListener("click", function () {
@@ -1466,10 +1500,123 @@ var RECORDER = (function () {
 
     if (el.mark) el.mark.addEventListener("click", function () {
       var note = el.markNote ? el.markNote.value.trim() : "";
-      var at = currentAt();
-      append({ at: at == null ? state.duration : at, mark: note || "打点" });
+      markNow(note);
       if (el.markNote) el.markNote.value = "";
-      setStatus("已打点" + (note ? "：" + note : ""));
+    });
+
+    /* ---------------- 浮窗：会议软件全屏时也能记 ---------------- */
+
+    // 置顶小窗（Document Picture-in-Picture）里没有宿主页面的 CSS，样式必须自带一份内联文本，
+    // 这样仍是零外链；不支持 PiP 的浏览器退化成“记录卡吸顶”，不是假装成功。
+    var FLOAT_CSS = [
+      "html,body{margin:0;height:100%}",
+      "body{font:13px/1.6 system-ui,-apple-system,'Segoe UI','Microsoft YaHei',sans-serif;color:#14181f;background:#fff}",
+      ".rec-float-panel{padding:12px;height:100%;box-sizing:border-box;display:flex;flex-direction:column;gap:8px}",
+      ".rf-head{display:flex;align-items:center;gap:10px}",
+      ".rf-head b{font:600 20px/1 ui-monospace,Consolas,monospace;font-variant-numeric:tabular-nums}",
+      ".rf-head span{font-size:12px;color:#5b6572;margin-right:auto}",
+      ".rf-head button{width:auto;padding:6px 10px;border:1px solid #cfd6e2;border-radius:6px;background:#f6f8fb;font:inherit;cursor:pointer}",
+      ".rec-float-panel input,.rec-float-panel textarea{width:100%;box-sizing:border-box;font:inherit;font-size:16px;padding:8px 10px;border:1px solid #cfd6e2;border-radius:8px;background:#fff;color:inherit}",
+      ".rec-float-panel textarea{min-height:88px;resize:vertical}",
+      ".rf-row{display:flex;gap:8px}",
+      ".rf-row button{flex:1;min-height:44px;border:1px solid #cfd6e2;border-radius:8px;background:#f6f8fb;font:inherit;font-weight:600;cursor:pointer}",
+      ".rf-row button#rf-say{background:#14548c;border-color:#14548c;color:#fff}",
+      "#rf-tip{margin:0;font-size:12px;color:#5b6572}"
+    ].join("");
+
+    var floatCtl = createFloat();
+
+    function createFloat() {
+      var pipWin = null, panel = null;
+      function supported() {
+        return typeof window !== "undefined" && window.documentPictureInPicture &&
+          typeof window.documentPictureInPicture.requestWindow === "function";
+      }
+      function q(sel) { return panel ? panel.querySelector(sel) : null; }
+      function build() {
+        if (panel) return panel;
+        panel = document.createElement("div");
+        panel.className = "rec-float-panel";
+        panel.innerHTML = '<div class="rf-head"><b id="rf-clock">00:00</b><span id="rf-count">0 条</span>' +
+          '<button type="button" id="rf-close">收起</button></div>' +
+          '<input id="rf-speaker" type="text" placeholder="当前说话人（可空）">' +
+          '<textarea id="rf-line" placeholder="记一条，回车提交；Shift+回车换行"></textarea>' +
+          '<div class="rf-row"><button type="button" id="rf-say">记一条</button>' +
+          '<button type="button" id="rf-mark">打点</button></div>' +
+          '<p id="rf-tip">录音和文字只在本机；成稿仍在上面的页面里</p>';
+        var say = q("#rf-say"), line = q("#rf-line"), mk = q("#rf-mark"), close = q("#rf-close");
+        if (say) say.addEventListener("click", function () { sayFromPanel(); });
+        if (mk) mk.addEventListener("click", function () { markNow(""); });
+        if (line) line.addEventListener("keydown", function (e) {
+          if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sayFromPanel(); }
+        });
+        if (close) close.addEventListener("click", function () {
+          if (pipWin) pipWin.close();
+          else document.body.classList.remove("rec-float-on");
+          setStatus("浮窗已收起，记录仍在页面里");
+        });
+        return panel;
+      }
+      function sayFromPanel() {
+        var line = q("#rf-line"), sp = q("#rf-speaker");
+        var text = line ? line.value : "";
+        var who = (sp && sp.value.trim()) ? sp.value.trim().replace(/[：:]/g, "") : speaker();
+        if (submitText(text, who) && line) { line.value = ""; line.focus(); }
+      }
+      function sync() {
+        if (!panel) return;
+        var c = q("#rf-clock"), n = q("#rf-count"), sp = q("#rf-speaker");
+        if (c) c.textContent = clock(rec.elapsed ? rec.elapsed() : 0);
+        if (n) n.textContent = state.turns.filter(function (t) { return !t.mark; }).length + " 条";
+        if (sp) sp.placeholder = "当前说话人" + (speaker() ? "（" + speaker() + "）" : "（可空）");
+      }
+      function stickyOn() {
+        document.body.classList.add("rec-float-on");
+        if (el.floatBtn) el.floatBtn.textContent = "取消吸附";
+      }
+      function open() {
+        if (!supported()) {
+          stickyOn();
+          setStatus("这个浏览器不支持置顶浮窗（Chrome / Edge 116+ 才有）；已把记录卡吸在页面顶部，滚到哪儿都能记。");
+          return Promise.resolve("sticky");
+        }
+        if (pipWin) { pipWin.close(); return Promise.resolve("closed"); }
+        return window.documentPictureInPicture.requestWindow({ width: 340, height: 380 }).then(function (win) {
+          pipWin = win;
+          var style = win.document.createElement("style");
+          style.textContent = FLOAT_CSS;
+          win.document.head.appendChild(style);
+          build();
+          win.document.body.appendChild(panel);
+          sync();
+          win.addEventListener("pagehide", function () {
+            if (panel && panel.parentNode) panel.parentNode.removeChild(panel);
+            pipWin = null;
+            if (el.floatBtn) el.floatBtn.textContent = "浮窗";
+            setStatus("浮窗已关闭，记录仍在页面里");
+          });
+          if (el.floatBtn) el.floatBtn.textContent = "关闭浮窗";
+          setStatus("浮窗已打开：会议软件全屏时也能记；录音与成稿仍在页面里");
+          return "pip";
+        }).catch(function (err) {
+          stickyOn();
+          setStatus("浮窗打开失败（" + (err && err.message ? err.message : "浏览器拒绝") + "），已把记录卡吸在页面顶部。");
+          return "failed";
+        });
+      }
+      return { supported: supported, open: open, sync: sync };
+    }
+
+    function refreshFloat() { if (floatCtl) floatCtl.sync(); }
+
+    if (el.floatBtn) el.floatBtn.addEventListener("click", function () {
+      if (document.body.classList.contains("rec-float-on")) {
+        document.body.classList.remove("rec-float-on");
+        el.floatBtn.textContent = "浮窗";
+        setStatus("已取消吸附");
+        return;
+      }
+      floatCtl.open();
     });
 
     function download(name, data, mime) {
@@ -1702,7 +1849,408 @@ var RECORDER = (function () {
   };
 })();
 
-if (typeof module !== "undefined" && module.exports) module.exports = RECORDER;
+/* CommonJS 导出已在单文件构建中移除 */
+</script>
+<script>
+/* 字幕文件解析：把视频会议（腾讯会议 / 飞书妙记 / Zoom / Teams / 录屏工具）导出的
+ * .vtt / .srt 变成质检能直接吃的转录。
+ *
+ * 为什么单独一个模块：视频会议真正能在浏览器里“提取出内容”的载体就是字幕文件——
+ * 视频音轨浏览器解不出文字（本页不做语音识别），字幕却是原原本本的会议内容。
+ *
+ * 只做格式转换，不改一字词：时间码统一成 [HH:MM:SS]，说话人保留原标签，
+ * 滚动字幕（说话中反复重发的同一句）按前缀重叠去重，同人连续 cue 合并成一轮发言。
+ *
+ * 纯函数、零依赖，可在 node 里直接 require 测。
+ */
+var SUBTITLE = (function () {
+  "use strict";
+
+  var VERSION = "1.0";
+
+  // SRT 与 VTT 的时间码写法不同：00:00:01,000 / 00:00:01.000 / 00:01.000（VTT 允许省小时）
+  var TIME_RE = /(\d{1,2}:)?\d{1,2}:\d{1,2}(?:[.,]\d{1,3})?/g;
+  var ARROW_RE = /-->/;
+
+  function pad2(n) {
+    return (n < 10 ? "0" : "") + n;
+  }
+
+  function clock(sec) {
+    var s = Math.max(0, Math.floor(sec || 0));
+    var h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), ss = s % 60;
+    return pad2(h) + ":" + pad2(m) + ":" + pad2(ss);
+  }
+
+  // "01:02:03.400" / "1:02,4" / "02:03.000" → 秒
+  function toSeconds(stamp) {
+    var t = String(stamp || "").trim();
+    if (!t) return 0;
+    var parts = t.replace(",", ".").split(":");
+    var sec = 0, i;
+    for (i = 0; i < parts.length; i++) {
+      sec = sec * 60 + (parseFloat(parts[i]) || 0);
+    }
+    return Math.round(sec * 1000) / 1000;
+  }
+
+  function cleanInline(s) {
+    var t = String(s == null ? "" : s);
+    t = t.replace(/\r/g, "");
+    // VTT 的 cue 设置（align:start position:10% line:0）与卡拉OK 时间标签
+    t = t.replace(/<(\d[\d:.,]*)\>/g, "");
+    t = t.replace(/<[^>]+>/g, "");          // <c>、<i>、<b>、<u>、<v 名字> 等样式与说话人标签另行提取
+    t = t.replace(/\{[^}]*\}/g, "");
+    t = t.replace(/&nbsp;/g, " ").replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"');
+    return t.trim();
+  }
+
+  // 说话人在 <v 张三> 里
+  function speakerFromTag(line) {
+    var m = String(line).match(/<v(?:\.[^\s>]*)?\s+([^>]+)>/i);
+    return m ? cleanInline(m[1]).replace(/^["“]|["”]$/g, "") : "";
+  }
+
+  // 说话人在正文前缀里：张三： / 张三: / 张三 - / [张三] 都见过
+  function speakerFromPrefix(text) {
+    var t = String(text || "").trim();
+    var m = t.match(/^([^\s：:，。；\-\[\]]{1,12})\s*[：:]\s*(.+)$/);
+    if (m && m[2] && !/^\d/.test(m[1])) return { speaker: m[1], text: m[2].trim() };
+    var b = t.match(/^\[([^\]]{1,12})\]\s*(.+)$/);
+    if (b && b[2]) return { speaker: b[1], text: b[2].trim() };
+    return null;
+  }
+
+  function isCjk(ch) {
+    var c = String(ch || "").charCodeAt(0);
+    return (c >= 0x4e00 && c <= 0x9fff) || (c >= 0x3000 && c <= 0x303f) || (c >= 0xff00 && c <= 0xffef);
+  }
+
+  // cue 内多行：中文直接接，西文补空格，避免 “今天 讨论” 这种断词
+  function joinLines(lines) {
+    var out = "";
+    (lines || []).forEach(function (line) {
+      var t = cleanInline(line);
+      if (!t) return;
+      if (!out) { out = t; return; }
+      var prev = out.charAt(out.length - 1);
+      out += (isCjk(prev) || isCjk(t.charAt(0))) ? t : " " + t;
+    });
+    return out;
+  }
+
+  // 解析成 cue 列表：[{at, end, speaker, text}]
+  function cues(raw) {
+    var text = String(raw == null ? "" : raw).replace(/^\ufeff/, "").replace(/\r\n?/g, "\n");
+    var blocks = text.split(/\n{2,}/);
+    var out = [];
+    var idx = 0;
+    blocks.forEach(function (block) {
+      var lines = block.split("\n").filter(function (l) { return l.trim().length; });
+      if (!lines.length) return;
+      var head = lines[0].trim();
+      if (/^WEBVTT/i.test(head) || /^NOTE\b/i.test(head) || /^STYLE\b/i.test(head) || /^REGION\b/i.test(head)) {
+        // 头块里可能紧跟着第一条 cue，取到箭头行再继续
+        if (!ARROW_RE.test(block)) return;
+      }
+      // 找到时间码行（SRT 的序号行会被跳过）
+      var at = -1, i;
+      for (i = 0; i < lines.length; i++) if (ARROW_RE.test(lines[i])) { at = i; break; }
+      if (at < 0) return;
+      var stamps = lines[at].match(TIME_RE) || [];
+      if (!stamps.length) return;
+      var start = toSeconds(stamps[0]);
+      var end = stamps.length > 1 ? toSeconds(stamps[1]) : start;
+      var body = lines.slice(at + 1);
+      var sp = "";
+      body.forEach(function (l) {
+        if (!sp) sp = speakerFromTag(l);
+      });
+      var txt = joinLines(body);
+      if (!txt) return;
+      if (!sp) {
+        var p = speakerFromPrefix(txt);
+        if (p) { sp = p.speaker; txt = p.text; }
+      }
+      idx += 1;
+      out.push({ index: idx, at: start, end: end, speaker: sp || "", text: txt });
+    });
+    return out;
+  }
+
+  // 滚动字幕去重：新 cue 把上一句整段包含进来（实时字幕的常见输出）时，替换而不是叠加
+  function mergeRolling(list) {
+    var out = [], dropped = 0;
+    (list || []).forEach(function (cue) {
+      var prev = out[out.length - 1];
+      if (!prev) { out.push(cue); return; }
+      var a = prev.text, b = cue.text;
+      // 实时字幕常有一侧不带说话人标签（样式块里只有 <c>）：一侧为空时视为同一人，
+      // 否则同一句话会被拆成两个“人”，还会把重复文本喂进依据回查。
+      var compatible = !prev.speaker || !cue.speaker || prev.speaker === cue.speaker;
+      if (a === b && compatible) {
+        if (!prev.speaker) prev.speaker = cue.speaker;
+        prev.end = cue.end;
+        dropped += 1;
+        return;                                                     // 完全重复
+      }
+      if (b.length > a.length && b.indexOf(a) === 0 && compatible) {
+        prev.text = b;                                              // 同一句越滚越长
+        prev.end = cue.end;
+        if (!prev.speaker) prev.speaker = cue.speaker;
+        dropped += 1;
+        return;
+      }
+      if (a.length > b.length && a.indexOf(b) === 0 && compatible) { dropped += 1; return; }  // 短的回声
+      out.push(cue);
+    });
+    return { cues: out, dropped: dropped };
+  }
+
+  // 同人连续的 cue 合成一段发言（质检按“轮”看，碎句会让切句与人物归属更难判）
+  function mergeSpeakerRuns(list) {
+    var out = [];
+    (list || []).forEach(function (cue) {
+      var prev = out[out.length - 1];
+      var sp = cue.speaker || "";
+      if (prev && (prev.speaker || "") === sp && cue.at - prev.end <= 3) {
+        prev.text = joinLines([prev.text, cue.text]);
+        prev.end = cue.end;
+        prev.merged = (prev.merged || 1) + 1;
+        return;
+      }
+      out.push({ at: cue.at, end: cue.end, speaker: sp, text: cue.text });
+    });
+    return out;
+  }
+
+  function namesOf(turns) {
+    var seen = {}, out = [];
+    (turns || []).forEach(function (t) {
+      var n = String(t.speaker || "").trim();
+      if (!n || seen[n]) return;
+      seen[n] = 1;
+      out.push(n);
+    });
+    return out;
+  }
+
+  // 主入口：字幕文本 → {turns, transcript, names, ...}
+  function parse(raw) {
+    var list = cues(raw);
+    if (!list.length) {
+      return { ok: false, turns: [], transcript: "", names: [], cues: 0, dropped: 0,
+        reason: "没读到字幕块：VTT/SRT 需要有「时间码 --> 时间码」的行。" };
+    }
+    var rolled = mergeRolling(list);
+    var turns = mergeSpeakerRuns(rolled.cues);
+    var names = namesOf(turns);
+    var unlabeled = turns.filter(function (t) { return !t.speaker; }).length;
+    // 没有说话人标签时统一落到「说话人1」：qc_tools 的名单反推会忽略这类枚举标签，
+    // 不会把一个占位名当成真实负责人。
+    turns = turns.map(function (t) {
+      return { at: t.at, speaker: t.speaker || "说话人1", text: t.text };
+    });
+    var all = namesOf(turns);
+    var body = turns.map(function (t) {
+      return "[" + clock(t.at) + "] " + t.speaker + "：" + t.text;
+    }).join("\n");
+    var head = "参会人：" + (all.length ? all.join("、") : "说话人1");
+    var transcript = head + "\n\n" + body;
+    return {
+      ok: true,
+      turns: turns,
+      transcript: transcript,
+      names: all,
+      cues: list.length,
+      merged: rolled.cues.length,
+      dropped: rolled.dropped,
+      unlabeled: unlabeled,
+      chars: transcript.replace(/\s/g, "").length,
+      duration: turns.length ? turns[turns.length - 1].at : 0
+    };
+  }
+
+  // 内容嗅探：不靠扩展名，只看结构
+  function detect(raw) {
+    var t = String(raw == null ? "" : raw).replace(/^\ufeff/, "");
+    if (!t.trim()) return { is_subtitle: false, format: "", cues: 0 };
+    var hasArrow = /\d{1,2}:\d{2}(?::\d{2})?\s*[,.]?\d{0,3}\s*-->\s*\d{1,2}:\d{2}/.test(t);
+    var format = /^\s*WEBVTT/.test(t) ? "vtt" : (hasArrow ? "srt" : "");
+    var n = (t.match(/-->/g) || []).length;
+    return { is_subtitle: !!format, format: format, cues: n };
+  }
+
+  return {
+    VERSION: VERSION,
+    clock: clock,
+    toSeconds: toSeconds,
+    cues: cues,
+    parse: parse,
+    detect: detect,
+    mergeRolling: mergeRolling,
+    mergeSpeakerRuns: mergeSpeakerRuns
+  };
+})();
+
+/* CommonJS 导出已在单文件构建中移除 */
+</script>
+<script>
+/* 视频会议材料入口：判断拖进来的是什么，把能提取的先提取，把不能提取的说清楚。
+ *
+ * 浏览器能做的与不能做的分界：
+ *   - 能：读字幕文件（.vtt/.srt）→ 转录；读录像的时长/分辨率/有无音轨 → 素材卡。
+ *   - 不能：把视频音轨变成文字（本页不做语音识别，也没有密钥）。
+ * 所以录像走「素材卡 + 转写路径」，绝不假装能出纪要。
+ *
+ * 纯函数部分（kindOf / formatDuration / videoCard）可在 node 里测；
+ * probeVideo 需要真实 DOM，只在页面里用。
+ */
+var MEDIA = (function () {
+  "use strict";
+
+  var VERSION = "1.0";
+
+  var SUB_EXT = ["vtt", "srt", "sbv", "ass", "ssa"];
+  var VIDEO_EXT = ["mp4", "mov", "mkv", "webm", "m4v", "avi", "flv", "ts", "mpg", "mpeg", "wmv"];
+  var AUDIO_EXT = ["m4a", "mp3", "wav", "aac", "ogg", "oga", "flac", "opus", "amr", "wma"];
+
+  function extOf(name) {
+    var n = String(name || "").toLowerCase().replace(/[?#].*$/, "");
+    var i = n.lastIndexOf(".");
+    return i < 0 ? "" : n.slice(i + 1);
+  }
+
+  // 页面里 SUBTITLE 与 MEDIA 同处一个脚本作用域；node 里 MEDIA 单独 require 时按需取
+  function subtitleMod() {
+    if (typeof SUBTITLE !== "undefined" && SUBTITLE && SUBTITLE.detect) return SUBTITLE;
+    try {
+      if (typeof require === "function") return require("./subtitle.js");
+    } catch (e) {}
+    return null;
+  }
+
+  // 扩展名 + 内容双判：扩展名认错（把 vtt 存成 txt）时，内容说了算
+  function kindOf(name, text) {
+    var ext = extOf(name);
+    var t = String(text == null ? "" : text);
+    var sub = subtitleMod();
+    if (sub) {
+      var d = sub.detect(t);
+      if (d.is_subtitle) return { kind: "subtitle", ext: ext, format: d.format, cues: d.cues, by: "content" };
+    }
+    if (SUB_EXT.indexOf(ext) >= 0) return { kind: "subtitle", ext: ext, format: ext, cues: 0, by: "ext" };
+    if (VIDEO_EXT.indexOf(ext) >= 0) return { kind: "video", ext: ext, by: "ext" };
+    if (AUDIO_EXT.indexOf(ext) >= 0) return { kind: "audio", ext: ext, by: "ext" };
+    return { kind: "text", ext: ext, by: "ext" };
+  }
+
+  function pad2(n) { return (n < 10 ? "0" : "") + n; }
+
+  function formatDuration(sec) {
+    var s = Math.max(0, Math.round(Number(sec) || 0));
+    var h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), ss = s % 60;
+    return h ? (h + ":" + pad2(m) + ":" + pad2(ss)) : (pad2(m) + ":" + pad2(ss));
+  }
+
+  function formatBytes(n) {
+    var v = Number(n) || 0;
+    if (v >= 1024 * 1024 * 1024) return (v / 1073741824).toFixed(2) + " GB";
+    if (v >= 1024 * 1024) return (v / 1048576).toFixed(1) + " MB";
+    if (v >= 1024) return Math.round(v / 1024) + " KB";
+    return v + " B";
+  }
+
+  // 录像素材卡：能读出什么就写什么，读不出的写「未探测」，不留空白让人猜
+  function videoCard(meta) {
+    var m = meta || {};
+    var lines = [];
+    lines.push("素材：" + (m.name || "未命名"));
+    lines.push("类型：视频（" + (m.ext || "未知容器") + "）" + (m.size ? " · " + formatBytes(m.size) : ""));
+    lines.push("时长：" + (m.duration ? formatDuration(m.duration) : "未读出"));
+    lines.push("分辨率：" + (m.width && m.height ? (m.width + "×" + m.height) : "未读出"));
+    lines.push("音轨：" + (m.hasAudio === true ? "有" : (m.hasAudio === false ? "未检测到" : "未探测")));
+    lines.push("本页能做的：读出上面这些信息，不把音轨转成文字（浏览器里没有语音识别）。");
+    lines.push("转文字的两条路：");
+    lines.push("  1) 会议平台自带转写：腾讯会议 / 飞书妙记 / Zoom / Teams 里把这场会的「转写」「字幕」导出为 .vtt 或 .srt，再拖回本页，自动变成可质检的转录。");
+    lines.push("  2) 录屏文件：用本机工具抽出音轨（本仓库的 mediakit 能力可做 mp4 → m4a），交给平台或会议 MCP 转写，把转写原文存成 .txt 再拖回本页。");
+    lines.push("提示：有字幕就别转音频——字幕的时间码和说话人比转写更准，也不用等。");
+    return lines.join("\n");
+  }
+
+  // 音频素材卡（录音文件同理：本页不识别，只读元信息）
+  function audioCard(meta) {
+    var m = meta || {};
+    return [
+      "素材：" + (m.name || "未命名"),
+      "类型：音频（" + (m.ext || "未知容器") + "）" + (m.size ? " · " + formatBytes(m.size) : ""),
+      "时长：" + (m.duration ? formatDuration(m.duration) : "未读出"),
+      "本页不做语音识别。转文字请走会议平台（腾讯会议 / 飞书妙记）或会议 MCP，拿到转写原文 .txt 后拖回本页。"
+    ].join("\n");
+  }
+
+  /* ---------------- DOM：读元信息（只在页面里调用） ---------------- */
+
+  function probe(file, opts) {
+    var o = opts || {};
+    return new Promise(function (resolve) {
+      var kind = o.kind || (VIDEO_EXT.indexOf(extOf(file && file.name)) >= 0 ? "video" : "audio");
+      var url = URL.createObjectURL(file);
+      var el = document.createElement(kind === "video" ? "video" : "audio");
+      var done = false;
+      function finish(meta) {
+        if (done) return;
+        done = true;
+        try { URL.revokeObjectURL(url); } catch (e) {}
+        resolve(meta);
+      }
+      var timer = setTimeout(function () {
+        // 读不出元信息（容器不支持、编码奇怪）时不要卡住：如实写“未读出”
+        finish({ name: file.name, ext: extOf(file.name), size: file.size, duration: 0, width: 0, height: 0, hasAudio: null });
+      }, o.timeout || 6000);
+      el.preload = "metadata";
+      el.muted = true;
+      el.onloadedmetadata = function () {
+        clearTimeout(timer);
+        var meta = {
+          name: file.name,
+          ext: extOf(file.name),
+          size: file.size,
+          duration: el.duration && isFinite(el.duration) ? el.duration : 0,
+          width: el.videoWidth || 0,
+          height: el.videoHeight || 0,
+          hasAudio: null
+        };
+        // 有音轨判定是尽力而为：各浏览器暴露的字段不同，读不到就保持 null（页面写“未探测”）
+        if (kind === "video") {
+          if (typeof el.mozHasAudio === "boolean") meta.hasAudio = el.mozHasAudio;
+          else if (typeof el.webkitAudioDecodedByteCount === "number" && el.webkitAudioDecodedByteCount > 0) meta.hasAudio = true;
+        } else {
+          meta.hasAudio = true;
+        }
+        finish(meta);
+      };
+      el.onerror = function () {
+        clearTimeout(timer);
+        finish({ name: file.name, ext: extOf(file.name), size: file.size, duration: 0, width: 0, height: 0, hasAudio: null });
+      };
+      el.src = url;
+    });
+  }
+
+  return {
+    VERSION: VERSION,
+    extOf: extOf,
+    kindOf: kindOf,
+    formatDuration: formatDuration,
+    formatBytes: formatBytes,
+    videoCard: videoCard,
+    audioCard: audioCard,
+    probe: probe
+  };
+})();
+
+/* CommonJS 导出已在单文件构建中移除 */
 </script>
 <script>
   if (window.RECORDER) RECORDER.mount({});
@@ -2200,8 +2748,18 @@ function readFile(f){
 function routeText(text, name){
   const t = String(text == null ? "" : text);
   if (!t.trim()) return null;
-  const c = A_CHANNEL.classifyMaterial(t);
   const trEl = $("tr-input"), todoEl = $("todo-input");
+  // 字幕先认：VTT/SRT 有「时间码 --> 时间码」的硬结构，解析完就是可质检的转录
+  if (window.SUBTITLE && SUBTITLE.detect(t).is_subtitle){
+    const sub = SUBTITLE.parse(t);
+    if (sub.ok){
+      trEl.value = sub.transcript;
+      return {kind: "subtitle", name: name || "字幕", asr: false,
+        extra: "字幕 " + sub.cues + " 条 → " + sub.names.length + " 人 / " + sub.turns.length + " 轮" +
+          (sub.dropped ? "，去重 " + sub.dropped : "")};
+    }
+  }
+  const c = A_CHANNEL.classifyMaterial(t);
   if (c.kind === "todo") todoEl.value = t;
   else if (c.kind === "transcript") trEl.value = t;
   else if (!trEl.value.trim()) trEl.value = t;      // 认不出：优先填空着的框
@@ -2210,17 +2768,57 @@ function routeText(text, name){
   return {kind: c.kind, name: name || "粘贴内容", asr: !!(c.asr && c.asr.is_asr)};
 }
 
-const KIND_CN = {transcript: "转录", todo: "待办表", unknown: "未认出", empty: "空"};
+const KIND_CN = {transcript: "转录", todo: "待办表", unknown: "未认出", empty: "空", subtitle: "字幕"};
 
 function importMany(items){
-  const placed = (items || []).map(it => routeText(it.text, it.name)).filter(Boolean);
+  const placed = [];
+  for (const it of (items || [])){
+    if (it && it.kind) { placed.push({kind: it.kind, name: it.name, extra: it.extra}); continue; }  // 已由字幕解析放置
+    const p = it && routeText(it.text, it.name);
+    if (p) placed.push(p);
+  }
   const st = $("import-status");
   if (!placed.length){ if (st) st.textContent = "没有读到内容"; return; }
   if (st){
     st.textContent = "已分拣 " + placed.length + " 份：" + placed.map(p =>
-      p.name + " → " + (KIND_CN[p.kind] || p.kind) + (p.asr ? "（录音转写稿）" : "")).join("；");
+      p.name + " → " + (KIND_CN[p.kind] || p.kind) + (p.extra ? "（" + p.extra + "）" : "") +
+      (p.asr ? "（录音转写稿）" : "")).join("；");
   }
   if ($("tr-input").value.trim() && $("todo-input").value.trim()) $("run").click();
+}
+
+// 录像与音频读元信息生成素材卡；字幕解析成转录；其余文本照旧分拣
+async function intakeFiles(fs){
+  const items = [], cards = [];
+  for (const f of (fs || [])){
+    const k = MEDIA.kindOf(f.name, "");
+    if (k.kind === "video" || k.kind === "audio"){
+      const meta = await MEDIA.probe(f, {kind: k.kind});
+      cards.push(k.kind === "video" ? MEDIA.videoCard(meta) : MEDIA.audioCard(meta));
+      continue;
+    }
+    const text = await readFile(f);
+    const k2 = MEDIA.kindOf(f.name, text);
+    if (k2.kind === "subtitle"){
+      const sub = SUBTITLE.parse(text);
+      if (sub.ok){
+        $("tr-input").value = sub.transcript;
+        items.push({kind: "subtitle", name: f.name,
+          extra: "字幕 " + sub.cues + " 条 → " + sub.names.length + " 人 / " + sub.turns.length + " 轮" +
+            (sub.dropped ? "，去重 " + sub.dropped : "")});
+        continue;
+      }
+      if ($("video-status")) $("video-status").textContent = f.name + "：像字幕但没读到时间码行，按普通文本处理";
+    }
+    items.push({name: f.name, text});
+  }
+  if (cards.length){
+    const out = $("video-out"), vs = $("video-status");
+    if (out){ out.hidden = false; out.textContent = cards.join("\n\n"); }
+    if (vs) vs.textContent = "已读出 " + cards.length + " 份素材的信息（本页不把音轨转成文字）";
+  }
+  if (items.length) importMany(items);
+  else if (!cards.length && $("video-status")) $("video-status").textContent = "没有读到内容";
 }
 
 $("import-run").addEventListener("click", () => {
@@ -2234,10 +2832,13 @@ $("import-run").addEventListener("click", () => {
 
 $("import-file").addEventListener("click", () => $("import-files").click());
 $("import-files").addEventListener("change", async e => {
-  const fs = Array.from((e.target && e.target.files) || []);
-  const items = [];
-  for (const f of fs) items.push({name: f.name, text: await readFile(f)});
-  importMany(items);
+  await intakeFiles(Array.from((e.target && e.target.files) || []));
+  if (e.target) e.target.value = "";
+});
+
+$("video-pick").addEventListener("click", () => $("video-files").click());
+$("video-files").addEventListener("change", async e => {
+  await intakeFiles(Array.from((e.target && e.target.files) || []));
   if (e.target) e.target.value = "";
 });
 
@@ -2256,9 +2857,7 @@ document.addEventListener("drop", async e => {
   const fs = Array.from((e.dataTransfer && e.dataTransfer.files) || []);
   if (!fs.length) return;
   e.preventDefault();
-  const items = [];
-  for (const f of fs) items.push({name: f.name, text: await readFile(f)});
-  importMany(items);
+  await intakeFiles(fs);
 });
 
 function download(name, text, mime){
