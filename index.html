@@ -276,6 +276,7 @@
       <a href="#stage3">修正版</a>
       <a href="#org">组织视图</a>
       <a href="#check">本地校验</a>
+      <a href="#asr">录音稿</a>
       <a href="#limits">边界</a>
       <a href="agent.html">智能体</a>
       <a href="workbench.html">质检工作台</a>
@@ -435,6 +436,28 @@
     </div>
   </section>
 
+  <section id="asr" data-composition-section="7">
+    <div class="wrap">
+      <div class="sec-head"><span class="sec-num">输入形态</span><h2>录音转出来的稿子，也能进这套质检</h2></div>
+      <p class="sec-sub">真实会议的转录多来自语音识别：行首带时间码、一轮发言一行、没有句末标点、夹着「听不清」这类占位。这种稿子直接拿去逐字回查，会把整表判成「依据不可追溯」——那是格式噪声，不是依据被改写。下表是同一份 41 句语料的三遍对照（识别稿由人工稿改写而来，用于验证引擎行为，不代表真实录音的识别准确率）。</p>
+      <div class="panel">
+        <div class="panel-head"><span class="panel-title">同一份语料 · 三种输入形态</span><span class="tag rev">14 条依据</span></div>
+        <table>
+          <caption class="skip">录音识别稿与人工整理稿的依据回查对照</caption>
+          <thead><tr><th scope="col">输入形态</th><th scope="col">严格逐字</th><th scope="col">去格式噪声后</th><th scope="col" class="hide-sm">说明</th></tr></thead>
+          <tbody>
+            <tr><td>人工整理稿</td><td><span class="verdict v-ok">14/14</span></td><td><span class="verdict v-ok">14/14</span></td><td class="hide-sm meta">基线：句子带标点，说话人与名单齐备</td></tr>
+            <tr><td>识别稿 · 时间码</td><td><span class="verdict v-bad">0/14</span></td><td><span class="verdict v-ok">14/14</span></td><td class="hide-sm meta">加 [00:00:12] 前缀、去句末标点</td></tr>
+            <tr><td>识别稿 · 含占位</td><td><span class="verdict v-bad">0/14</span></td><td><span class="verdict v-ok">14/14</span></td><td class="hide-sm meta">另加 3 处 [听不清]</td></tr>
+            <tr><td>识别稿 · 无参会人行</td><td><span class="verdict v-bad">0/14</span></td><td><span class="verdict v-ok">14/14</span></td><td class="hide-sm meta">名单由说话人标签反推 6 人</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="grp-note"><b>去噪只去格式，不改词</b>：剥掉时间码、说话人前缀、识别占位与标点后再比对；同音错字不会被修掉，它会继续表现为不匹配——那是识别误差的正确暴露。<b>反推名单只认出现两次以上的真名</b>，只发过一次言的人会漏，需要人工补「参会人：」行。</p>
+      <p class="meta">想自己试：把识别稿粘进<a href="#check">本地校验</a>，勾选「忽略空白」即去噪比对，取消即严格逐字——两次结果并排就是差距来源。<a href="workbench.html">质检工作台</a>同样支持，并在体检区标出「识别为录音转写稿」。</p>
+    </div>
+  </section>
+
   <section id="limits" data-composition-section="6">
     <div class="wrap">
       <div class="sec-head"><span class="sec-num">边界</span><h2>这套方法不能做什么</h2></div>
@@ -451,7 +474,7 @@
     </div>
   </section>
 
-  <section id="repro" data-composition-section="7" style="border-bottom:0">
+  <section id="repro" data-composition-section="8" style="border-bottom:0">
     <div class="wrap">
       <div class="sec-head"><span class="sec-num">复现</span><h2>评委可以照着跑一遍</h2></div>
       <p class="sec-sub">全部判断都能落到命令上：依据校验、切片候选、组织视图、双人一致率。提示词与判定口径写在《会议待办判定手册 v1.0》与《质检 A 维度·按人切片重扫 v1.0》里。</p>
@@ -756,14 +779,20 @@ function runCheck(){
     outEl.textContent = "先粘贴一份转录，或点「载入示例转录」。";
     return;
   }
-  const text = norm(raw);
+  // v1.5：录音转写稿（带时间码、无句末标点、含 [听不清]）先按同口径去噪再比对；
+  // 取消「忽略空白」即回到严格逐字，用来演示格式噪声本身的影响。
+  const asr = (typeof A_CHANNEL !== "undefined" && A_CHANNEL.detectAsr && ignoreSpace && ignoreSpace.checked)
+    ? A_CHANNEL.detectAsr(raw) : { is_asr: false };
+  const base = asr.is_asr ? A_CHANNEL.asrNormalize(raw) : raw;
+  const text = norm(base);
+  const denoise = q => asr.is_asr ? q.replace(/[。！？；，、：,.!?;:]/g, "") : q;
   const groups = [["生成版", GEN.map(r => [r[0], r[5]])], ["修正版", REV.map(r => [r[0], r[5]])]];
   let total = 0, hit = 0;
   const rows = [];
   groups.forEach(([label, items]) => {
     items.forEach(([id, quote]) => {
       const parts = splitQuote(quote);
-      const ok = parts.length > 0 && parts.every(p => text.includes(norm(p)));
+      const ok = parts.length > 0 && parts.every(p => text.includes(norm(denoise(p))));
       total++; if (ok) hit++;
       rows.push(`<tr><td class="num">${id}</td><td><span class="tag">${label}</span></td>` +
         `<td><span class="verdict ${ok ? "v-ok" : "v-bad"}">${ok ? "命中" : "不匹配"}</span></td>` +
@@ -771,12 +800,15 @@ function runCheck(){
     });
   });
   const pct = total ? Math.round(hit / total * 100) : 0;
-  summaryEl.innerHTML = `共 ${total} 条依据：命中 <b>${hit}</b>，不匹配 <b>${total - hit}</b>（${pct}%）`;
+  const asrNote = asr.is_asr
+    ? `　· 识别为录音转写稿（${({ "timestamp+speaker": "时间码+说话人", "speaker": "仅说话人标记", "timestamp": "仅时间码" })[asr.form] || asr.form}，${asr.lines} 行），比对前已去掉时间码、说话人前缀、识别占位与标点`
+    : "";
+  summaryEl.innerHTML = `共 ${total} 条依据：命中 <b>${hit}</b>，不匹配 <b>${total - hit}</b>（${pct}%）${asrNote}`;
   outEl.className = "";
   outEl.innerHTML = `<table><caption class="skip">依据校验结果</caption>
     <thead><tr><th scope="col">编号</th><th scope="col">版本</th><th scope="col">结果</th><th scope="col">原文依据</th></tr></thead>
     <tbody>${rows.join("")}</tbody></table>` +
-    (total - hit ? `<p class="meta" style="margin:10px 0 0">不匹配通常两个原因：转录被“智能润色”改过，或表内依据被概括改写——这正是 D 维度要抓的东西。</p>` : "");
+    (total - hit ? `<p class="meta" style="margin:10px 0 0">不匹配通常三个原因：转录被“智能润色”改过、表内依据被概括改写，或录音识别把话听成了别的词——这正是 D 维度要抓的东西。</p>` : "");
 }
 
 document.getElementById("load-sample").addEventListener("click", () => {
@@ -856,6 +888,94 @@ const A_CHANNEL = (function(){
     return text.replace(INVITEE_RE, "");
   }
 
+  // ---- v1.5 录音识别（ASR）稿适配：与 qc_tools.py v1.6 同口径 ----
+  const TS_RE = /^\s*[\[\(【]?(\d{1,3}:\d{2}(?::\d{2})?(?:[.,]\d{1,3})?)[\]\)】]?\s*/;
+  const PLACEHOLDER_RE = /[\[\(（【]\s*(听不清|听不见|无法识别|噪声|噪音|音乐|笑声|掌声|沉默|静音|重叠|unintelligible|inaudible|noise|music|laughter|silence|overlap)\s*[\]\)）】]/gi;
+  const PUNCT_ALL_RE = /[。！？；，、：,.!?;:]/g;
+  const ASR_ENUM_HEADS = ["说话人", "发言人", "嘉宾"];
+  const FORM_CN = {"timestamp+speaker": "时间码+说话人", "speaker": "仅说话人标记",
+                   "timestamp": "仅时间码", "plain": "纯文本", "empty": "空输入"};
+  const VERDICT_CN = {"usable": "可检", "degraded": "降级可检", "unusable": "不可检"};
+
+  function isEnumHead(tag){
+    return ASR_ENUM_HEADS.some(h => tag.indexOf(h) === 0);
+  }
+
+  // 检测这段文字是不是录音识别稿，并给出可机械核对的指标
+  function detectAsr(raw){
+    const lines = String(raw || "").split(/\r?\n/).map(s => s.trim()).filter(Boolean);
+    const total = lines.length;
+    if (!total) return {form: "empty", is_asr: false, lines: 0, ts_lines: 0, speaker_lines: 0,
+      placeholder: 0, punctless_long: 0, ts_ratio: 0, speaker_ratio: 0, punctless_ratio: 0,
+      verdict: "unusable", notes: ["输入为空。"]};
+    let tsLines = 0, spkLines = 0, punctless = 0;
+    lines.forEach(line0 => {
+      let line = line0;
+      if (TS_RE.test(line)){ tsLines++; line = line.replace(TS_RE, ""); }
+      const m = line.match(/^([^\s：:，。；]{1,12})[：:](.*)$/);
+      if (m){ spkLines++; line = m[2]; }
+      const body = line.trim();
+      if (body.length >= 30 && !/[。！？；]/.test(body) && !/[，、]/.test(body)) punctless++;
+    });
+    const ph = (String(raw || "").match(PLACEHOLDER_RE) || []).length;
+    const tsRatio = tsLines / total, spkRatio = spkLines / total, plRatio = punctless / total;
+    const isAsr = !!(tsLines || ph || plRatio >= 0.3);
+    const form = (tsLines && spkLines) ? "timestamp+speaker"
+      : (spkLines ? "speaker" : (tsLines ? "timestamp" : "plain"));
+    const notes = [];
+    if (isAsr && !spkLines) notes.push("没有说话人标记：按人切片的遗漏检查无法执行，只能跑依据回查与字段核查。");
+    if (isAsr && plRatio >= 0.3) notes.push("有 " + punctless + " 行是没有标点的长句：按标点切句会失效，需按时间码或长度切。");
+    if (ph) notes.push("含 " + ph + " 处识别占位（“听不清”“笑声”等）：这些位置不能当依据原句。");
+    if (!isAsr && !spkLines) notes.push("无时间码、无说话人标记、句子带标点：按人工整理稿处理。");
+    const verdict = (isAsr && spkRatio >= 0.8) ? "usable"
+      : (isAsr && spkRatio > 0) ? "degraded" : (isAsr ? "unusable" : "usable");
+    return {form: form, is_asr: isAsr, lines: total, ts_lines: tsLines, speaker_lines: spkLines,
+      placeholder: ph, punctless_long: punctless, ts_ratio: tsRatio, speaker_ratio: spkRatio,
+      punctless_ratio: plRatio, verdict: verdict, notes: notes};
+  }
+
+  // 去格式噪声：时间码、说话人前缀、识别占位、标点；不动用词
+  function asrNormalize(raw){
+    return String(raw || "").split(/\r?\n/).map(line => {
+      let s = line;
+      if (TS_RE.test(s)) s = s.replace(TS_RE, "");
+      const m = s.match(/^([^\s：:，。；]{1,12})[：:](.*)$/);
+      if (m) s = m[2];
+      return s.replace(PLACEHOLDER_RE, "").replace(PUNCT_ALL_RE, "");
+    }).join("\n");
+  }
+
+  // 一轮发言切成句子：标点优先，其次时间码，再次逗号，最后按 40 字兜底
+  function splitTurn(text, hasTs){
+    const parts = text.match(/[^。！？；]*[。！？；]|[^。！？；]+/g) || [];
+    if (parts.length > 1) return parts.map(p => p.trim()).filter(Boolean);
+    if (hasTs) return [text];
+    if (text.length <= 80) return [text];
+    const out = [];
+    text.split(/[，、；]/).forEach(seg => {
+      let s = seg.trim();
+      while (s.length > 40){ out.push(s.slice(0, 40)); s = s.slice(40); }
+      if (s) out.push(s);
+    });
+    return out.length ? out : [text];
+  }
+
+  // 没有「参会人：」行时，从说话人标签反推真名（只认出现 ≥2 次的 1–4 字标签）
+  function deriveNames(lines){
+    const cnt = {};
+    lines.forEach(raw => {
+      let line = String(raw);
+      if (TS_RE.test(line)) line = line.replace(TS_RE, "");
+      const m = line.match(/^([^\s：:，。；]{1,12})[：:]/);
+      if (!m) return;
+      const tag = m[1];
+      if (!/^[\u4e00-\u9fa5]{1,4}$/.test(tag) || isEnumHead(tag)) return;
+      cnt[tag] = (cnt[tag] || 0) + 1;
+    });
+    return Object.keys(cnt).filter(t => cnt[t] >= 2)
+      .sort((a, b) => (cnt[b] - cnt[a]) || (a < b ? -1 : 1));
+  }
+
   // 解析：返回 { names, body:[[speaker, sentence], ...] }
   function parseTranscript(raw){
     const lines = String(raw || "").split(/\r?\n/);
@@ -867,13 +987,21 @@ const A_CHANNEL = (function(){
         break;
       }
     }
+    if (!names.length) names = deriveNames(lines);
     const body = [];
     for (const line of lines){
-      // v1.3：姓名由 2–4 字放宽为 1–4 字，兼容单字代称脱敏
-      const m = line.trim().match(/^([\u4e00-\u9fa5]{1,4})[：:](.*)$/);
-      if (!m || names.indexOf(m[1]) < 0) continue;
-      const parts = m[2].trim().match(/[^。！？；]*[。！？；]|[^。！？；]+/g) || [];
-      for (const p of parts) if (p.trim()) body.push([m[1], p.trim()]);
+      // v1.3 姓名 1–4 字兼容单字代称；v1.5 先剥行首时间码，姓名放宽到 12 字符以容纳英文名
+      let text = String(line).trim();
+      if (!text) continue;
+      const hasTs = TS_RE.test(text);
+      if (hasTs) text = text.replace(TS_RE, "");
+      const m = text.match(/^([^\s：:，。；]{1,12})[：:](.*)$/);
+      if (!m) continue;
+      const sp = m[1], rest = m[2].trim();
+      if (!rest) continue;
+      if (names.length && names.indexOf(sp) < 0) continue;
+      if (!names.length && isEnumHead(sp)) continue;
+      splitTurn(rest, hasTs).forEach(p => { if (p) body.push([sp, p]); });
     }
     return {names, body};
   }
@@ -1078,16 +1206,20 @@ const A_CHANNEL = (function(){
     const res = sliceScan(p.names, sentences, rows || []);
     // v1.3：把“静默归零”变成可解释的提示。切句为 0 时最可能的原因是
     // 发言行格式不对或姓名与名单不一致（单字代称曾经整条失配且不报错）。
+    const asr = detectAsr(raw);
+    const hasRoster = /参会人[：:]/.test(String(raw || ""));
     let warn = null;
     if (!p.names.length){
       warn = "没读到「参会人：」行";
     } else if (!sentences.length){
       warn = "读到了名单（" + p.names.length + " 人），但一句发言都没切出来——请检查每行是否为「姓名：内容」，且姓名与「参会人：」行里的一致。单字代称（甲/乙/丙/丁）已支持。";
+    } else if (asr.is_asr && !hasRoster){
+      warn = "识别为录音转写稿：名单由说话人标签反推 " + p.names.length + " 人，建议核对是否漏人；依据比对已自动去掉时间码与识别占位。";
     }
-    return {names: p.names, count: sentences.length, cands: res.cands, low: res.low, orgs: res.orgs, warn: warn};
+    return {names: p.names, count: sentences.length, cands: res.cands, low: res.low, orgs: res.orgs, warn: warn, asr: asr};
   }
 
-  return {scan, _sliceScan: sliceScan};
+  return {scan, _sliceScan: sliceScan, detectAsr, asrNormalize, parseTranscript};
 })();
 
 const aOutEl = document.getElementById("a-out");

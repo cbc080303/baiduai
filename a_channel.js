@@ -69,6 +69,94 @@ const A_CHANNEL = (function(){
     return text.replace(INVITEE_RE, "");
   }
 
+  // ---- v1.5 录音识别（ASR）稿适配：与 qc_tools.py v1.6 同口径 ----
+  const TS_RE = /^\s*[\[\(【]?(\d{1,3}:\d{2}(?::\d{2})?(?:[.,]\d{1,3})?)[\]\)】]?\s*/;
+  const PLACEHOLDER_RE = /[\[\(（【]\s*(听不清|听不见|无法识别|噪声|噪音|音乐|笑声|掌声|沉默|静音|重叠|unintelligible|inaudible|noise|music|laughter|silence|overlap)\s*[\]\)）】]/gi;
+  const PUNCT_ALL_RE = /[。！？；，、：,.!?;:]/g;
+  const ASR_ENUM_HEADS = ["说话人", "发言人", "嘉宾"];
+  const FORM_CN = {"timestamp+speaker": "时间码+说话人", "speaker": "仅说话人标记",
+                   "timestamp": "仅时间码", "plain": "纯文本", "empty": "空输入"};
+  const VERDICT_CN = {"usable": "可检", "degraded": "降级可检", "unusable": "不可检"};
+
+  function isEnumHead(tag){
+    return ASR_ENUM_HEADS.some(h => tag.indexOf(h) === 0);
+  }
+
+  // 检测这段文字是不是录音识别稿，并给出可机械核对的指标
+  function detectAsr(raw){
+    const lines = String(raw || "").split(/\r?\n/).map(s => s.trim()).filter(Boolean);
+    const total = lines.length;
+    if (!total) return {form: "empty", is_asr: false, lines: 0, ts_lines: 0, speaker_lines: 0,
+      placeholder: 0, punctless_long: 0, ts_ratio: 0, speaker_ratio: 0, punctless_ratio: 0,
+      verdict: "unusable", notes: ["输入为空。"]};
+    let tsLines = 0, spkLines = 0, punctless = 0;
+    lines.forEach(line0 => {
+      let line = line0;
+      if (TS_RE.test(line)){ tsLines++; line = line.replace(TS_RE, ""); }
+      const m = line.match(/^([^\s：:，。；]{1,12})[：:](.*)$/);
+      if (m){ spkLines++; line = m[2]; }
+      const body = line.trim();
+      if (body.length >= 30 && !/[。！？；]/.test(body) && !/[，、]/.test(body)) punctless++;
+    });
+    const ph = (String(raw || "").match(PLACEHOLDER_RE) || []).length;
+    const tsRatio = tsLines / total, spkRatio = spkLines / total, plRatio = punctless / total;
+    const isAsr = !!(tsLines || ph || plRatio >= 0.3);
+    const form = (tsLines && spkLines) ? "timestamp+speaker"
+      : (spkLines ? "speaker" : (tsLines ? "timestamp" : "plain"));
+    const notes = [];
+    if (isAsr && !spkLines) notes.push("没有说话人标记：按人切片的遗漏检查无法执行，只能跑依据回查与字段核查。");
+    if (isAsr && plRatio >= 0.3) notes.push("有 " + punctless + " 行是没有标点的长句：按标点切句会失效，需按时间码或长度切。");
+    if (ph) notes.push("含 " + ph + " 处识别占位（“听不清”“笑声”等）：这些位置不能当依据原句。");
+    if (!isAsr && !spkLines) notes.push("无时间码、无说话人标记、句子带标点：按人工整理稿处理。");
+    const verdict = (isAsr && spkRatio >= 0.8) ? "usable"
+      : (isAsr && spkRatio > 0) ? "degraded" : (isAsr ? "unusable" : "usable");
+    return {form: form, is_asr: isAsr, lines: total, ts_lines: tsLines, speaker_lines: spkLines,
+      placeholder: ph, punctless_long: punctless, ts_ratio: tsRatio, speaker_ratio: spkRatio,
+      punctless_ratio: plRatio, verdict: verdict, notes: notes};
+  }
+
+  // 去格式噪声：时间码、说话人前缀、识别占位、标点；不动用词
+  function asrNormalize(raw){
+    return String(raw || "").split(/\r?\n/).map(line => {
+      let s = line;
+      if (TS_RE.test(s)) s = s.replace(TS_RE, "");
+      const m = s.match(/^([^\s：:，。；]{1,12})[：:](.*)$/);
+      if (m) s = m[2];
+      return s.replace(PLACEHOLDER_RE, "").replace(PUNCT_ALL_RE, "");
+    }).join("\n");
+  }
+
+  // 一轮发言切成句子：标点优先，其次时间码，再次逗号，最后按 40 字兜底
+  function splitTurn(text, hasTs){
+    const parts = text.match(/[^。！？；]*[。！？；]|[^。！？；]+/g) || [];
+    if (parts.length > 1) return parts.map(p => p.trim()).filter(Boolean);
+    if (hasTs) return [text];
+    if (text.length <= 80) return [text];
+    const out = [];
+    text.split(/[，、；]/).forEach(seg => {
+      let s = seg.trim();
+      while (s.length > 40){ out.push(s.slice(0, 40)); s = s.slice(40); }
+      if (s) out.push(s);
+    });
+    return out.length ? out : [text];
+  }
+
+  // 没有「参会人：」行时，从说话人标签反推真名（只认出现 ≥2 次的 1–4 字标签）
+  function deriveNames(lines){
+    const cnt = {};
+    lines.forEach(raw => {
+      let line = String(raw);
+      if (TS_RE.test(line)) line = line.replace(TS_RE, "");
+      const m = line.match(/^([^\s：:，。；]{1,12})[：:]/);
+      if (!m) return;
+      const tag = m[1];
+      if (!/^[\u4e00-\u9fa5]{1,4}$/.test(tag) || isEnumHead(tag)) return;
+      cnt[tag] = (cnt[tag] || 0) + 1;
+    });
+    return Object.keys(cnt).filter(t => cnt[t] >= 2)
+      .sort((a, b) => (cnt[b] - cnt[a]) || (a < b ? -1 : 1));
+  }
+
   // 解析：返回 { names, body:[[speaker, sentence], ...] }
   function parseTranscript(raw){
     const lines = String(raw || "").split(/\r?\n/);
@@ -80,13 +168,21 @@ const A_CHANNEL = (function(){
         break;
       }
     }
+    if (!names.length) names = deriveNames(lines);
     const body = [];
     for (const line of lines){
-      // v1.3：姓名由 2–4 字放宽为 1–4 字，兼容单字代称脱敏
-      const m = line.trim().match(/^([\u4e00-\u9fa5]{1,4})[：:](.*)$/);
-      if (!m || names.indexOf(m[1]) < 0) continue;
-      const parts = m[2].trim().match(/[^。！？；]*[。！？；]|[^。！？；]+/g) || [];
-      for (const p of parts) if (p.trim()) body.push([m[1], p.trim()]);
+      // v1.3 姓名 1–4 字兼容单字代称；v1.5 先剥行首时间码，姓名放宽到 12 字符以容纳英文名
+      let text = String(line).trim();
+      if (!text) continue;
+      const hasTs = TS_RE.test(text);
+      if (hasTs) text = text.replace(TS_RE, "");
+      const m = text.match(/^([^\s：:，。；]{1,12})[：:](.*)$/);
+      if (!m) continue;
+      const sp = m[1], rest = m[2].trim();
+      if (!rest) continue;
+      if (names.length && names.indexOf(sp) < 0) continue;
+      if (!names.length && isEnumHead(sp)) continue;
+      splitTurn(rest, hasTs).forEach(p => { if (p) body.push([sp, p]); });
     }
     return {names, body};
   }
@@ -291,16 +387,20 @@ const A_CHANNEL = (function(){
     const res = sliceScan(p.names, sentences, rows || []);
     // v1.3：把“静默归零”变成可解释的提示。切句为 0 时最可能的原因是
     // 发言行格式不对或姓名与名单不一致（单字代称曾经整条失配且不报错）。
+    const asr = detectAsr(raw);
+    const hasRoster = /参会人[：:]/.test(String(raw || ""));
     let warn = null;
     if (!p.names.length){
       warn = "没读到「参会人：」行";
     } else if (!sentences.length){
       warn = "读到了名单（" + p.names.length + " 人），但一句发言都没切出来——请检查每行是否为「姓名：内容」，且姓名与「参会人：」行里的一致。单字代称（甲/乙/丙/丁）已支持。";
+    } else if (asr.is_asr && !hasRoster){
+      warn = "识别为录音转写稿：名单由说话人标签反推 " + p.names.length + " 人，建议核对是否漏人；依据比对已自动去掉时间码与识别占位。";
     }
-    return {names: p.names, count: sentences.length, cands: res.cands, low: res.low, orgs: res.orgs, warn: warn};
+    return {names: p.names, count: sentences.length, cands: res.cands, low: res.low, orgs: res.orgs, warn: warn, asr: asr};
   }
 
-  return {scan, _sliceScan: sliceScan};
+  return {scan, _sliceScan: sliceScan, detectAsr, asrNormalize, parseTranscript};
 })();
 
 if (typeof module !== "undefined" && module.exports){

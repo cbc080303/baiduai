@@ -74,23 +74,47 @@ def load_rows(path):
         return list(csv.DictReader(f))
 
 
-def preflight(raw, rows, names, sentences):
+FORM_CN = {
+    "timestamp+speaker": "时间码+说话人",
+    "speaker": "仅说话人标记",
+    "timestamp": "仅时间码",
+    "plain": "纯文本",
+    "empty": "空输入",
+}
+VERDICT_CN = {"usable": "可检", "degraded": "降级可检", "unusable": "不可检"}
+
+
+def preflight(raw, rows, names, sentences, asr_info=None):
     """输入体检：判断“这份材料能不能被检”，而不是直接判它错。"""
     issues = []
+    asr_info = asr_info or qc_tools.detect_asr(raw)
 
     if not (raw or "").strip():
         issues.append({"level": "block", "text": "转录为空。", "fix": "先给一份逐字转写稿，或用 --demo 看样例。"})
     has_names = "参会人：" in raw or "参会人:" in raw
     speakers = len(SPEAKER_RE.findall(raw or ""))
     if raw.strip() and not has_names:
-        issues.append({"level": "warn", "text": "没读到「参会人：」行。",
-                       "fix": "按人切片查遗漏需要这份名单；缺了 A 通道不可用，D 与 C 仍可跑。"})
+        if asr_info["is_asr"] and names:
+            issues.append({"level": "info",
+                           "text": "没有「参会人：」行，名单由说话人标签反推 %d 人。" % len(names),
+                           "fix": "反推只认出现 ≥2 次的真名；请核对是否漏人，或把转写误识别的词当成了人名。"})
+        else:
+            issues.append({"level": "warn", "text": "没读到「参会人：」行。",
+                           "fix": "按人切片查遗漏需要这份名单；缺了 A 通道不可用，D 与 C 仍可跑。"})
     if raw.strip() and has_names and speakers == 0:
         issues.append({"level": "block", "text": "读到了参会人，但一句「姓名：内容」都没切出来。",
                        "fix": "检查每行是否「姓名：」开头，姓名要与名单一致（甲/乙/丙/丁也支持）。"})
     if raw.strip() and not has_names and speakers == 0 and len(raw) > 60:
         issues.append({"level": "block", "text": "这段文字看着像会议纪要正文，不像逐字转写稿。",
                        "fix": "纪要正文是概括过的，依据回查会全不匹配——不要用它跑 D。"})
+    if raw.strip() and asr_info["is_asr"]:
+        issues.append({"level": "info",
+                       "text": "识别为录音转写稿（%s，%d 行：时间码 %d 行、说话人 %d 行、识别占位 %d 处）。"
+                               % (FORM_CN.get(asr_info["form"], asr_info["form"]), asr_info["lines"],
+                                  asr_info["ts_lines"], asr_info["speaker_lines"], asr_info["placeholder"]),
+                       "fix": "已按转写稿口径处理：比对前去掉时间码、说话人前缀、识别占位与标点；结论「%s」。%s"
+                              % (VERDICT_CN.get(asr_info["verdict"], asr_info["verdict"]),
+                                 "；".join(asr_info["notes"]) if asr_info["notes"] else "")})
 
     if not rows:
         issues.append({"level": "block", "text": "待办表读不出任务行。", "fix": "表头要有「任务」列。"})
@@ -170,9 +194,11 @@ def md_table(headers, rows):
 def build_report(ctx):
     L = []
     L.append("# 会议待办质检报告\n")
+    asr = ctx.get("asr") or {}
     L.append(
-        "输入：参会人 %d 人｜句子 %d 条｜待办 %d 条\n"
-        % (len(ctx["names"]), len(ctx["sentences"]), len(ctx["rows"]))
+        "输入：参会人 %d 人｜句子 %d 条｜待办 %d 条%s\n"
+        % (len(ctx["names"]), len(ctx["sentences"]), len(ctx["rows"]),
+           "｜**录音转写稿**（%s）" % FORM_CN.get(asr.get("form"), asr.get("form")) if asr.get("is_asr") else "")
     )
 
     # 1 结论
@@ -180,7 +206,15 @@ def build_report(ctx):
     issues = ctx.get("issues") or []
     L.append("- 输入体检：%s\n" % ("**%d 项提示**（见下）" % len(issues) if issues else "通过"))
     for x in issues:
-        L.append("  - [%s] %s %s\n" % ("阻断" if x["level"] == "block" else "提示", x["text"], x["fix"]))
+        tag = {"block": "阻断", "info": "信息"}.get(x["level"], "提示")
+        L.append("  - [%s] %s %s\n" % (tag, x["text"], x["fix"]))
+    if asr.get("is_asr"):
+        L.append(
+            "- 转写形态：**%s**｜时间码 %d%%｜说话人 %d%%｜无标点长句 %d 行｜识别占位 %d 处｜结论：**%s**\n"
+            % (FORM_CN.get(asr["form"], asr["form"]), round(asr["ts_ratio"] * 100),
+               round(asr["speaker_ratio"] * 100), asr["punctless_long"], asr["placeholder"],
+               VERDICT_CN.get(asr["verdict"], asr["verdict"]))
+        )
 
     d_bad = [h for h in ctx["d_hits"] if h.get("checkable", True) and not h["hit"]]
     d_uncheck = [h for h in ctx["d_hits"] if not h.get("checkable", True)]
@@ -347,7 +381,8 @@ def main(argv=None):
     d_hits = qc_tools.check_quotes(rows, raw, normalize=not args.strict_space)
     cands, low, orgs = qc_tools.slice_scan(names, sentences, rows)
     fields = field_check(rows, names, sentences)
-    issues = preflight(raw, rows, names, sentences)
+    asr_info = qc_tools.detect_asr(raw)
+    issues = preflight(raw, rows, names, sentences, asr_info)
 
     items = org_view.build_items(rows, names, raw)
     rd = {"可直接建单": 0, "需补字段": 0, "待人工判断": 0}
@@ -376,6 +411,7 @@ def main(argv=None):
         "readiness": rd,
         "queue_risk": queue_risk,
         "issues": issues,
+        "asr": asr_info,
         "same_source": False,
     }
 
@@ -423,6 +459,8 @@ def main(argv=None):
                 "机构主体": len(orgs),
                 "可建单分档": rd,
                 "输入体检": len(issues),
+                "转写形态": asr_info["form"],
+                "转写可检性": asr_info["verdict"],
             },
             f,
             ensure_ascii=False,
