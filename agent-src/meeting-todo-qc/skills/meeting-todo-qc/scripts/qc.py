@@ -371,8 +371,24 @@ def main(argv=None):
                 sys.stderr.write("找不到输入文件：%s\n" % p)
                 return 2
 
-    if transcript.split(".")[-1].lower() == "csv" and not todo.endswith(".csv"):
+    # v1.3：不再靠扩展名猜谁是转录。两份材料按内容判类型，文件命名写反也不影响。
+    def _peek(path):
+        for enc in ("utf-8-sig", "utf-8", "gbk"):
+            try:
+                with open(path, encoding=enc) as f:
+                    return f.read()
+            except UnicodeDecodeError:
+                continue
+        return ""
+
+    k1 = qc_tools.classify_material(_peek(transcript))["kind"]
+    k2 = qc_tools.classify_material(_peek(todo))["kind"]
+    if k1 == "todo" and k2 != "todo":
         transcript, todo = todo, transcript
+        print("[分拣] 两份材料按内容对调：转录=%s｜待办=%s" % (transcript, todo))
+    elif k1 == "todo" and k2 == "todo":
+        sys.stderr.write("两份材料都像待办表，无法判断哪份是转录：%s / %s\n" % (transcript, todo))
+        return 2
 
     raw, names, body = load_transcript(transcript)
     sentences = qc_tools.build_sentences(body)

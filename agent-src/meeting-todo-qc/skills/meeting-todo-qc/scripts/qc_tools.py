@@ -258,6 +258,87 @@ def _split_turn(text, has_ts):
     return out or [text]
 
 
+# ---------------------------------------------------------------- 材料分拣
+
+TODO_HEAD_KW = ("任务", "待办", "负责人", "责任人", "截止时间", "时限", "原文依据", "依据", "约束", "编号", "序号")
+SPEAKER_LINE_RE = re.compile(r"^[^\s：:，。；]{1,12}[：:]\s*\S")
+
+
+def classify_material(text):
+    """判断一段材料是会议转录还是待办表——让调用方不必先问“这是什么稿子”。
+
+    只看结构不看语义：待办表看「首行是不是表头 + 是否分成列」，转录看「说话人
+    前缀行占比」。两类都不像时返回 unknown，由调用方给体检而不是硬跑。
+    """
+    raw = (text or "").replace("\r\n", "\n").replace("\r", "\n")
+    lines = [l.strip() for l in raw.split("\n") if l.strip()]
+    if not lines:
+        return {"kind": "empty", "todo_score": 0, "transcript_score": 0,
+                "reasons": ["材料为空。"], "head_hits": [], "cols": 0,
+                "speaker_ratio": 0.0, "asr": detect_asr(raw)}
+
+    head = lines[0]
+    head_hits = [k for k in TODO_HEAD_KW if k in head]
+    if head.startswith("|"):
+        delim = "|"
+    elif "\t" in head:
+        delim = "\t"
+    elif head.count(",") >= 2:
+        delim = ","
+    elif head.count("，") >= 2:
+        delim = "，"
+    else:
+        delim = ""
+    cols = len([c for c in head.split(delim) if c.strip()]) if delim else 0
+
+    reasons = []
+    todo_score = 0
+    if len(head_hits) >= 2 and cols >= 3:
+        todo_score += 3
+        reasons.append("首行像表头（%s），分成 %d 列" % ("、".join(head_hits[:4]), cols))
+    elif len(head_hits) >= 2:
+        todo_score += 1
+        reasons.append("首行有多个表头词，但没分成列")
+    if len(lines) >= 2 and cols >= 3:
+        todo_score += 1
+
+    asr = detect_asr(raw)
+    spk = 0
+    for line in lines:
+        t = line
+        m_ts = TS_RE.match(t)
+        if m_ts:
+            t = t[m_ts.end():]
+        if SPEAKER_LINE_RE.match(t):
+            spk += 1
+    spk_ratio = spk / len(lines)
+
+    # 只认「过半行是发言行」这一条硬证据：说明类文档里零星几行“XX：”不算转录，
+    # 弱加分曾把组织视图、纪要正文误判成转录。
+    tr_score = 0
+    if spk_ratio >= 0.5 and spk >= 3:
+        tr_score += 3
+        reasons.append("%d/%d 行是「姓名：内容」式发言" % (spk, len(lines)))
+    if "参会人：" in raw or "参会人:" in raw:
+        tr_score += 1
+        reasons.append("含「参会人：」行")
+    if asr["is_asr"]:
+        tr_score += 1
+        reasons.append("含时间码或识别占位，属录音转写稿")
+
+    if todo_score >= 3 and todo_score >= tr_score:
+        kind = "todo"
+    elif tr_score >= 2 and tr_score > todo_score:
+        kind = "transcript"
+    elif todo_score >= 1 and not tr_score:
+        kind = "todo"
+    else:
+        kind = "unknown"   # 证据不足就不猜：页面会把它放进空框并提示核对
+    return {"kind": kind, "todo_score": todo_score, "transcript_score": tr_score,
+            "reasons": reasons, "head_hits": head_hits, "cols": cols,
+            "speaker_ratio": round(spk_ratio, 3), "asr": asr}
+
+
 # ---------------------------------------------------------------- 解析
 
 
