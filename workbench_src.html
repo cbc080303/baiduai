@@ -70,6 +70,12 @@
   .actions .row{margin:0}
   .status{font-size:13px;color:var(--muted);margin:0}
 
+  .import{border-color:var(--accent-line);background:linear-gradient(180deg,#fbfdff,#fff)}
+  .import h2 .idx{background:var(--accent);color:#fff}
+  .classify{margin:18px 0 0;border:1px solid var(--line);background:#f8fafc;border-radius:var(--radius);padding:10px 14px;font-size:12.5px;color:var(--muted);line-height:1.7}
+  .classify b{color:var(--ink);font-weight:650}
+  .classify .k{color:var(--accent);font-weight:600}
+  #import-input{min-height:76px}
   .preflight{margin:22px 0 0;border:1px solid #f0d9b5;background:var(--p1-bg);color:#7a4a08;
     border-radius:var(--radius);padding:12px 14px;font-size:13px}
   .preflight h3{margin:0 0 6px;font-size:14px;font-weight:650;color:#5c3606}
@@ -128,13 +134,27 @@
 </header>
 
 <div class="grid">
+  <div class="card import" style="grid-column:1/-1">
+    <h2><span class="idx" aria-hidden="true">0</span>把材料丢进来就行</h2>
+    <p class="hint">粘贴一段文字、拖入文件、或点「选择文件」（可多选）。系统会自己判断哪份是会议转录、哪份是待办表，放进下面两个框；两份齐了自动跑一遍。人工整理的稿子、录音转写稿、会议纪要都不用手工转换。</p>
+    <textarea id="import-input" spellcheck="false" placeholder="把会议转录、录音转写稿、或待办表直接粘进这里……"></textarea>
+    <div class="row">
+      <button class="primary" id="import-run">分拣并跑</button>
+      <button id="import-file">选择文件</button>
+      <input type="file" id="import-files" accept=".txt,.md,.markdown,.csv,.tsv,.json" multiple hidden>
+      <span class="status" id="import-status"></span>
+    </div>
+  </div>
+
   <div class="card">
     <h2><span class="idx" aria-hidden="true">1</span>会议转录</h2>
-    <p class="hint">每行必须是 <span class="mono">姓名：内容</span> 的逐字转录；首行写 <span class="mono">参会人：张三、李四</span>。有名单才能做按人切片。</p>
-    <p class="hint warn">注意：粘「会议纪要正文」不行——那是概括过的文字，依据必然大面积不匹配。要逐字转写稿。</p>
+    <p class="hint">自动分拣会填这里；也可以自己粘。人工稿写 <span class="mono">姓名：内容</span>，录音转写稿带时间码和「听不清」也没关系，首行 <span class="mono">参会人：张三、李四</span> 缺了会从说话人标签反推。</p>
+    <p class="hint warn">只有「会议纪要正文」不行——那是概括过的文字，依据必然大面积不匹配。粘进来时体检会明确告诉你这一点，不会假装跑出 0 分。</p>
     <textarea id="tr-input" spellcheck="false" placeholder="参会人：张岚、王睿、李思远&#10;&#10;张岚：今天三件事……&#10;王睿：漏斗数据我拉一下，下周二之前给你。"></textarea>
     <div class="row">
       <button id="load-sample">载入样例</button>
+      <button id="tr-file-btn">从文件导入</button>
+      <input type="file" id="tr-file" accept=".txt,.md,.markdown,.csv,.tsv" hidden>
       <button id="clear-all">清空</button>
     </div>
   </div>
@@ -145,9 +165,9 @@
     <p class="hint warn">「原文依据」这一列不能省：没有它就无法做依据回查，工具会明确标成「不可检」而不是「全部不匹配」。</p>
     <textarea id="todo-input" spellcheck="false" placeholder="编号,任务,负责人,截止时间,约束,原文依据&#10;1,拉取漏斗数据按渠道拆分,王睿,下周二前,按渠道拆分,&quot;王睿，你把漏斗数据拉出来……&quot;"></textarea>
     <div class="row">
-      <label class="chk"><input type="checkbox" id="ignore-space" checked> 忽略空白差异（默认开）</label>
-      <button id="pick-file">从文件导入 CSV</button>
-      <input type="file" id="file-input" accept=".csv,.tsv,.txt" hidden>
+      <label class="chk"><input type="checkbox" id="ignore-space" checked> 自动适配材料形态（默认开）</label>
+      <button id="pick-file">从文件导入</button>
+      <input type="file" id="file-input" accept=".txt,.md,.markdown,.csv,.tsv" hidden>
     </div>
   </div>
 </div>
@@ -517,6 +537,21 @@ function render(ctx){
   const bad = ctx.quotes.filter(q => q.checkable && !q.hit);
   let h = "";
 
+  // 系统判定：让使用者看到“它自己认成了什么、用了什么口径”，而不是自己去猜
+  if (ctx.classify && ctx.classify.tr){
+    const KIND = {transcript: "会议转录", todo: "待办表", unknown: "没能认出", empty: "空材料"};
+    const tr = ctx.classify.tr, td = ctx.classify.todo || {};
+    const form = (tr.asr && tr.asr.is_asr) ? "录音转写稿" : "人工整理稿";
+    h += '<div class="classify"><b>系统判定</b>：材料一 = <span class="k">' + (KIND[tr.kind] || tr.kind) +
+         "</span>（" + form + "）｜材料二 = <span class=\"k\">" + (KIND[td.kind] || td.kind) +
+         "</span>｜采用口径：<span class=\"k\">" +
+         (ctx.normalize ? "自动适配（去空白 + 转写稿去噪）" : "严格逐字（对照用）") + "</span>";
+    if (tr.kind === "unknown" || td.kind === "unknown"){
+      h += "｜<b>有一份材料没认出来</b>：若放错了框，把两份互换位置再跑一次即可。";
+    }
+    h += "</div>";
+  }
+
   const iss = (ctx.preflight && ctx.preflight.issues) || [];
   if (iss.length){
     h += '<div class="preflight"><h3>输入体检：' + iss.length + " 项" + '</h3><ul>';
@@ -592,11 +627,22 @@ function render(ctx){
 function collect(){
   const raw = $("tr-input").value.trim();
   const todo = $("todo-input").value.trim();
-  if (!raw){ $("status").textContent = "先粘贴转录。"; return null; }
-  if (!todo){ $("status").textContent = "先粘贴待办表（六列）。"; return null; }
+  if (!raw || !todo){
+    const miss = !raw ? "会议转录" : "待办表（六列）";
+    $("status").textContent = "还差一份" + miss + "：把它粘进最上面的「把材料丢进来就行」，或直接拖进来，会自动分拣。";
+    return null;
+  }
   const rows = QC.parseRows(todo);
   if (!rows.length){ $("status").textContent = "待办表读不出任务列，检查表头是否为 编号,任务,负责人,截止时间,约束,原文依据。"; return null; }
-  return QC.run(raw, todo, {ignoreSpace: $("ignore-space").checked});
+  const ctx = QC.run(raw, todo, {ignoreSpace: $("ignore-space").checked});
+  try {
+    ctx.classify = {
+      tr: A_CHANNEL.classifyMaterial(raw),
+      todo: A_CHANNEL.classifyMaterial(todo),
+      auto: !!$("ignore-space").checked
+    };
+  } catch (e) { ctx.classify = null; }
+  return ctx;
 }
 
 $("run").addEventListener("click", () => {
@@ -626,6 +672,80 @@ $("file-input").addEventListener("change", e => {
   const r = new FileReader();
   r.onload = () => { $("todo-input").value = String(r.result || "").replace(/^\ufeff/, ""); $("status").textContent = "已导入 " + f.name; };
   r.readAsText(f, "utf-8");
+});
+
+// ---------- 一键导入：按内容分拣，而不是让人先选框 ----------
+function readFile(f){
+  return new Promise(res => {
+    const r = new FileReader();
+    r.onload = () => res(String(r.result || "").replace(/^\ufeff/, ""));
+    r.onerror = () => res("");
+    r.readAsText(f, "utf-8");
+  });
+}
+
+function routeText(text, name){
+  const t = String(text == null ? "" : text);
+  if (!t.trim()) return null;
+  const c = A_CHANNEL.classifyMaterial(t);
+  const trEl = $("tr-input"), todoEl = $("todo-input");
+  if (c.kind === "todo") todoEl.value = t;
+  else if (c.kind === "transcript") trEl.value = t;
+  else if (!trEl.value.trim()) trEl.value = t;      // 认不出：优先填空着的框
+  else if (!todoEl.value.trim()) todoEl.value = t;
+  else todoEl.value = t;
+  return {kind: c.kind, name: name || "粘贴内容", asr: !!(c.asr && c.asr.is_asr)};
+}
+
+const KIND_CN = {transcript: "转录", todo: "待办表", unknown: "未认出", empty: "空"};
+
+function importMany(items){
+  const placed = (items || []).map(it => routeText(it.text, it.name)).filter(Boolean);
+  const st = $("import-status");
+  if (!placed.length){ if (st) st.textContent = "没有读到内容"; return; }
+  if (st){
+    st.textContent = "已分拣 " + placed.length + " 份：" + placed.map(p =>
+      p.name + " → " + (KIND_CN[p.kind] || p.kind) + (p.asr ? "（录音转写稿）" : "")).join("；");
+  }
+  if ($("tr-input").value.trim() && $("todo-input").value.trim()) $("run").click();
+}
+
+$("import-run").addEventListener("click", () => {
+  const t = $("import-input").value;
+  const parts = String(t || "").split(/\n{3,}/).filter(s => s.trim());
+  importMany(parts.length > 1
+    ? parts.map((s, i) => ({name: "第 " + (i + 1) + " 段", text: s}))
+    : [{name: "粘贴内容", text: t}]);
+  $("import-input").value = "";
+});
+
+$("import-file").addEventListener("click", () => $("import-files").click());
+$("import-files").addEventListener("change", async e => {
+  const fs = Array.from((e.target && e.target.files) || []);
+  const items = [];
+  for (const f of fs) items.push({name: f.name, text: await readFile(f)});
+  importMany(items);
+  if (e.target) e.target.value = "";
+});
+
+$("tr-file-btn").addEventListener("click", () => $("tr-file").click());
+$("tr-file").addEventListener("change", async e => {
+  const f = e.target && e.target.files && e.target.files[0];
+  if (f){ $("tr-input").value = await readFile(f); $("status").textContent = "已导入 " + f.name; }
+  if (e.target) e.target.value = "";
+});
+
+// 拖到页面任意位置都收：不用先想“这该放哪个框”
+["dragenter", "dragover"].forEach(ev => document.addEventListener(ev, e => {
+  if (e.dataTransfer && Array.from(e.dataTransfer.types || []).indexOf("Files") >= 0) e.preventDefault();
+}));
+document.addEventListener("drop", async e => {
+  const fs = Array.from((e.dataTransfer && e.dataTransfer.files) || []);
+  if (!fs.length) return;
+  e.preventDefault();
+  const items = [];
+  for (const f of fs) items.push({name: f.name, text: await readFile(f)});
+  importMany(items);
 });
 
 function download(name, text, mime){

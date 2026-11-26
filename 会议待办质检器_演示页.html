@@ -377,11 +377,11 @@
           <span class="tag">本地运行 · 不联网</span>
           <span class="spacer"></span>
           <label class="meta" style="display:flex;align-items:center;gap:6px;cursor:pointer">
-            <input type="checkbox" id="ignore-space" checked> 忽略空格差异
+            <input type="checkbox" id="ignore-space" checked> 自动适配材料形态（取消＝严格逐字对照）
           </label>
         </div>
         <div style="padding:14px 16px;display:grid;gap:10px">
-          <label for="tr-input" class="meta">把会议转录（“说话人：内容”格式）粘到下面，逐条核对每条待办的“原文依据”能否在转录里逐字找到。这一步是纯字符串匹配，在本机完成，不调用模型、不发网络请求。</label>
+          <label for="tr-input" class="meta">把材料粘到下面就行——人工整理的转录、录音转写稿（带时间码、没标点、夹“听不清”）都可以，格式不用管。系统自己判断形态、自己选口径，再逐条核对“原文依据”能否在转录里找到。纯字符串匹配，在本机完成，不调用模型、不发网络请求。</label>
           <textarea id="tr-input" rows="7" spellcheck="false" placeholder="张岚：……&#10;王睿：……"></textarea>
           <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
             <button class="btn" id="load-sample">载入示例转录</button>

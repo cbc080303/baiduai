@@ -115,6 +115,58 @@ const A_CHANNEL = (function(){
       punctless_ratio: plRatio, verdict: verdict, notes: notes};
   }
 
+  // v1.6 材料分拣：结构判断（表头+分列 → 待办表；说话人前缀占比 → 转录）
+  const TODO_HEAD_KW = ["任务", "待办", "负责人", "责任人", "截止时间", "时限", "原文依据", "依据", "约束", "编号", "序号"];
+  const SPEAKER_LINE_RE = /^[^\s：:，。；]{1,12}[：:]\s*\S/;
+
+  function classifyMaterial(text){
+    const raw = String(text == null ? "" : text).replace(/\r\n?/g, "\n");
+    const lines = raw.split("\n").map(s => s.trim()).filter(Boolean);
+    if (!lines.length) return {kind: "empty", todo_score: 0, transcript_score: 0,
+      reasons: ["材料为空。"], head_hits: [], cols: 0, speaker_ratio: 0, asr: detectAsr(raw)};
+    const head = lines[0];
+    const headHits = TODO_HEAD_KW.filter(k => head.indexOf(k) >= 0);
+    let delim = "";
+    if (head.trim().indexOf("|") === 0) delim = "|";
+    else if (head.indexOf("\t") >= 0) delim = "\t";
+    else if ((head.match(/,/g) || []).length >= 2) delim = ",";
+    else if ((head.match(/，/g) || []).length >= 2) delim = "，";
+    const cols = delim ? head.split(delim).filter(c => c.trim()).length : 0;
+    const reasons = [];
+    let todoScore = 0;
+    if (headHits.length >= 2 && cols >= 3){
+      todoScore += 3;
+      reasons.push("首行像表头（" + headHits.slice(0, 4).join("、") + "），分成 " + cols + " 列");
+    } else if (headHits.length >= 2){
+      todoScore += 1;
+      reasons.push("首行有多个表头词，但没分成列");
+    }
+    if (lines.length >= 2 && cols >= 3) todoScore += 1;
+    let spk = 0;
+    lines.forEach(l => {
+      let t = l;
+      if (TS_RE.test(t)) t = t.replace(TS_RE, "");
+      if (SPEAKER_LINE_RE.test(t)) spk++;
+    });
+    const spkRatio = spk / lines.length;
+    let trScore = 0;
+    // 只认「过半行是发言行」这一条硬证据：说明类文档里零星几行“XX：”不算转录，
+    // 弱加分曾把组织视图、纪要正文误判成转录。
+    // 另需至少 3 行发言行：单行材料（例如只有「参会人：张三、李四」）ratio 恒为 1，
+// 不加这道下限会把一行名单判成整份转录。
+    if (spkRatio >= 0.5 && spk >= 3){ trScore += 3; reasons.push(spk + "/" + lines.length + " 行是「姓名：内容」式发言"); }
+    if (/参会人[：:]/.test(raw)){ trScore += 1; reasons.push("含「参会人：」行"); }
+    const asr = detectAsr(raw);
+    if (asr.is_asr){ trScore += 1; reasons.push("含时间码或识别占位，属录音转写稿"); }
+    let kind;
+    if (todoScore >= 3 && todoScore >= trScore) kind = "todo";
+    else if (trScore >= 2 && trScore > todoScore) kind = "transcript";
+    else if (todoScore >= 1 && !trScore) kind = "todo";
+    else kind = "unknown";   // 证据不足就不猜：页面会把它放进空框并提示核对
+    return {kind: kind, todo_score: todoScore, transcript_score: trScore, reasons: reasons,
+            head_hits: headHits, cols: cols, speaker_ratio: spkRatio, asr: asr};
+  }
+
   // 去格式噪声：时间码、说话人前缀、识别占位、标点；不动用词
   function asrNormalize(raw){
     return String(raw || "").split(/\r?\n/).map(line => {
@@ -400,7 +452,7 @@ const A_CHANNEL = (function(){
     return {names: p.names, count: sentences.length, cands: res.cands, low: res.low, orgs: res.orgs, warn: warn, asr: asr};
   }
 
-  return {scan, _sliceScan: sliceScan, detectAsr, asrNormalize, parseTranscript};
+  return {scan, _sliceScan: sliceScan, detectAsr, asrNormalize, parseTranscript, classifyMaterial};
 })();
 
 if (typeof module !== "undefined" && module.exports){
