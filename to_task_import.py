@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""会议待办 -> 任务系统导入模板 v1.0
+"""会议待办 -> 任务系统导入模板 v1.1
+
+v1.1 修正（v1.0 只在 Teambition 写备注列，飞书/钉钉丢了配合人、条件时限与
+待确认原因）：备注统一并入三平台描述列的 `备注：…` 段；Teambition 的备注列
+保留（平台原生字段，内容与描述中的备注段一致）。三份模板的描述列自此同源。
 
 把《会议待办质检器》的修正版 CSV 转成三份可落到任务系统的导入模板：
 飞书任务 / 钉钉待办 / Teambition 任务，并给出字段映射表与导入前检查清单。
@@ -158,12 +162,15 @@ def build(row, base):
     cons = (row.get("约束") or "").strip()
     quote = (row.get("原文依据") or "").strip()
 
+    note_parts = [p for p in (owner_extra.lstrip("；"), due_note) if p]
+    remark = "；".join(note_parts)
+
     desc = f"约束：{cons}" if cons else ""
     desc += ("；" if desc else "") + f"原文依据：{quote}"
     desc += f"；质检编号：#{no}"
-
-    note_parts = [p for p in (owner_extra.lstrip("；"), due_note) if p]
-    remark = "；".join(note_parts)
+    if remark:
+        # v1.1：备注并入描述，三平台描述同源，不再只有 Teambition 看得到配合人/条件时限
+        desc += f"；备注：{remark}"
     return {
         "编号": no,
         "任务": task,
@@ -184,8 +191,10 @@ def to_profile(item, profile, list_name):
     if profile == "dingtalk":
         return [item["任务"], item["负责人"], item["截止时间"], item["描述"], DEFAULT_PRIORITY]
     if profile == "teambition":
+        # v1.1：备注列承载完整描述（含约束、原文依据、编号、备注），
+        # 此前只放简短备注，约束与原文依据在 Teambition 里是缺的。
         return [item["任务"], item["负责人"], item["截止时间"], DEFAULT_PRIORITY,
-                list_name, item["备注"]]
+                list_name, item["描述"]]
     raise ValueError(profile)
 
 
@@ -225,8 +234,9 @@ def mapping_md(items, base, list_name):
            "| 任务 | 任务名称 | 待办标题 | 任务标题 | 原样，仅去首尾空白 |",
            "| 负责人 | 负责人 | 执行人 | 执行者 | `待确认` 置空；多人写 `A（主）／B（配合）` 时取 A，B 进备注 |",
            "| 截止时间 | 截止时间 | 截止时间 | 截止时间 | 相对时间按基准日换算为 ISO；不可换算者置空并写原因 |",
-           "| 约束 | 描述 `约束：…` | 同上 | 同上 | 原样 |",
-           "| 原文依据 | 描述 `原文依据：…` | 同上 | 同上 | 逐字引用，不改写 |",
+           "| 约束 | 描述 `约束：…` | 描述 `约束：…` | 备注 `约束：…` | 原样 |",
+           "| 原文依据 | 描述 `原文依据：…` | 描述 `原文依据：…` | 备注 `原文依据：…` | 逐字引用，不改写 |",
+           "| 备注（v1.1） | 描述 `备注：…` | 描述 `备注：…` | 备注 `备注：…` | 配合人／条件时限／待确认原因；三平台承载列名不同、内容同源 |",
            "", "## 二、空值与默认值", "",
            "| 情形 | 处理 |",
            "|---|---|",
