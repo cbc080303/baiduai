@@ -18,7 +18,7 @@
 var RECORDER = (function () {
   "use strict";
 
-  var VERSION = "1.0";
+  var VERSION = "1.2";
   var DEFAULT_SPEAKER = "未标注";
   var MARK_PREFIX = "※";
 
@@ -92,23 +92,29 @@ var RECORDER = (function () {
   }
 
   // 预览追加：先同步参会人行，再把新行接到末尾。保留用户手动改过的正文。
-  function appendLine(previewText, turns, turn) {
-    var names = collectNames(turns);
-    var head = namesLine(names);
-    var rest = clean(previewText);
+  function lineOf(turn) {
+    if (!turn) return "";
+    if (turn.mark) {
+      var note = String(turn.mark).trim();
+      return stamp(turn.at) + " " + MARK_PREFIX + (note ? " " + note : "");
+    }
+    var sp = String(turn.speaker == null ? "" : turn.speaker).trim() || DEFAULT_SPEAKER;
+    return stamp(turn.at) + " " + sp + "：" + clean(turn.text).replace(/\n+/g, " ").trim();
+  }
+
+  // 成稿开头固定是「参会人：…」一行；取正文时先剥掉它，避免追加时重复
+  function stripNames(text) {
+    var rest = clean(text);
     var nameRe = /^参会人[：:].*(\n|$)/;
     if (nameRe.test(rest)) rest = rest.replace(nameRe, "").replace(/^\n+/, "");
-    var line;
-    if (turn && turn.mark) {
-      var note = String(turn.mark).trim();
-      line = stamp(turn.at) + " " + MARK_PREFIX + (note ? " " + note : "");
-    } else if (turn) {
-      var sp = String(turn.speaker == null ? "" : turn.speaker).trim() || DEFAULT_SPEAKER;
-      line = stamp(turn.at) + " " + sp + "：" + clean(turn.text).replace(/\n+/g, " ").trim();
-    } else {
-      line = "";
-    }
-    var body = rest.replace(/\s+$/, "");
+    return rest.replace(/\s+$/, "");
+  }
+
+  // 预览追加：先同步参会人行，再把新行接到末尾。保留用户手动改过的正文。
+  function appendLine(previewText, turns, turn) {
+    var head = namesLine(collectNames(turns));
+    var body = stripNames(previewText);
+    var line = lineOf(turn);
     return head + "\n\n" + (line ? (body ? body + "\n" + line : line) : body);
   }
 
@@ -129,6 +135,29 @@ var RECORDER = (function () {
     return "" + d.getFullYear() + two(d.getMonth() + 1) + two(d.getDate()) + "-" + two(d.getHours()) + two(d.getMinutes());
   }
 
+  // 会议名可能带斜杠、冒号、星号、问号、引号、尖括号、竖线或换行：
+  // 直接拼进文件名会让浏览器下载失败，拼进备份头会毁掉结构。这里按字符码过滤，避免转义歧义。
+  var BAD_NAME_CODES = [47, 92, 58, 42, 63, 34, 60, 62, 124];
+  function plainFileName(name) {
+    var t = String(name == null ? "" : name), out = "", i, c;
+    for (i = 0; i < t.length; i++) {
+      c = t.charCodeAt(i);
+      out += (BAD_NAME_CODES.indexOf(c) >= 0 || c < 32) ? "_" : t.charAt(i);
+    }
+    return out || "download";
+  }
+  function safeName(s, fallback) {
+    var t = String(s == null ? "" : s), out = "", i, c;
+    for (i = 0; i < t.length; i++) {
+      c = t.charCodeAt(i);
+      if (c === 10 || c === 13 || c === 9) { out += " "; continue; }
+      out += (BAD_NAME_CODES.indexOf(c) >= 0) ? "_" : t.charAt(i);
+    }
+    out = out.split(" ").filter(function (x) { return x.length; }).join(" ").trim();
+    while (out.charAt(0) === ".") out = out.slice(1);
+    return out ? out.slice(0, 60) : (fallback || "未命名会议");
+  }
+
   // 原稿备份 = 元信息头 + 完整正文（含打点）。元信息行不带「姓名：」结构，
   // 解析端会跳过，因此这份文件既能给人看，也能直接再送进质检。
   function buildBackup(rec) {
@@ -136,7 +165,7 @@ var RECORDER = (function () {
     var turns = rec.turns || [];
     var names = collectNames(turns, rec.names);
     var head = [
-      "# 会议记录：" + (rec.title || "未命名会议"),
+      "# 会议记录：" + safeName(rec.title, "未命名会议"),
       "# 记录时间：" + dateText(rec.createdAt),
       "# 时长：" + clock(rec.duration || 0),
       "# 说话人：" + (names.length ? names.join("、") : DEFAULT_SPEAKER),
@@ -165,7 +194,7 @@ var RECORDER = (function () {
     return JSON.stringify({
       app: "会议待办质检器 · 会议记录器",
       version: VERSION,
-      title: rec.title || "未命名会议",
+      title: safeName(rec.title, "未命名会议"),
       createdAt: rec.createdAt || Date.now(),
       createdAtText: dateText(rec.createdAt),
       durationSec: Math.floor(rec.duration || 0),
@@ -338,7 +367,7 @@ var RECORDER = (function () {
     var supported = typeof navigator !== "undefined" &&
       navigator.mediaDevices && typeof navigator.mediaDevices.getUserMedia === "function" &&
       typeof window !== "undefined" && typeof window.MediaRecorder !== "undefined";
-    var stream = null, mr = null, chunks = [], startedAt = 0, pausedMs = 0, pauseAt = 0;
+    var stream = null, mr = null, chunks = [], startedAt = 0, pausedMs = 0, pauseAt = 0, starting = false;
     var timer = null, meterTimer = null, audioCtx = null, analyser = null, raf = null;
 
     function now() { return Date.now(); }
@@ -362,6 +391,7 @@ var RECORDER = (function () {
       stopMeter();
       if (stream) { stream.getTracks().forEach(function (t) { t.stop(); }); stream = null; }
       mr = null;
+      starting = false;
     }
 
     function startMeter(s) {
@@ -397,11 +427,18 @@ var RECORDER = (function () {
 
     function start() {
       if (!supported) return Promise.reject(new Error("当前浏览器不支持录音"));
-      if (mr) return Promise.resolve(false);
+      if (mr || starting) return Promise.resolve(false);
+      starting = true;
       return navigator.mediaDevices.getUserMedia({ audio: true }).then(function (s) {
         stream = s;
         var mime = pickMime();
-        mr = mime ? new window.MediaRecorder(s, { mimeType: mime }) : new window.MediaRecorder(s);
+        try {
+          mr = mime ? new window.MediaRecorder(s, { mimeType: mime }) : new window.MediaRecorder(s);
+        } catch (e) {
+          // 构造失败必须把麦克风还回去，否则标签页一直亮着录音图标
+          cleanup();
+          throw new Error("浏览器没能开始录音：" + (e && e.message ? e.message : "MediaRecorder 初始化失败"));
+        }
         chunks = [];
         mr.ondataavailable = function (e) { if (e.data && e.data.size) chunks.push(e.data); };
         mr.start(1000);
@@ -410,7 +447,12 @@ var RECORDER = (function () {
         timer = setInterval(function () { if (hooks.onTick) hooks.onTick(elapsed()); }, 200);
         startMeter(s);
         if (hooks.onState) hooks.onState("recording");
+        starting = false;
         return true;
+      }, function (err) {
+        starting = false;
+        cleanup();
+        throw err;
       });
     }
 
@@ -437,15 +479,28 @@ var RECORDER = (function () {
         var duration = elapsed();
         var mime = mr.mimeType || "";
         var finished = mr;
+        var done = false, guard = null;
+        function finish(out) {
+          if (done) return;
+          done = true;
+          if (guard) clearTimeout(guard);
+          resolve(out);
+        }
+        // 个别 WebView 在 stop() 后不派发 onstop：留 1.5s 兜底，否则按键会永远停在「结束」上
+        guard = setTimeout(function () {
+          cleanup();
+          if (hooks.onState) hooks.onState("stopped");
+          finish(null);
+        }, 1500);
         mr.onstop = function () {
           var type = (finished.mimeType || mime || "audio/webm").split(";")[0];
           var blob = chunks.length ? new Blob(chunks, { type: type }) : null;
           cleanup();
           if (hooks.onState) hooks.onState("stopped");
           if (hooks.onTick) hooks.onTick(duration);
-          resolve(blob ? { blob: blob, type: type, duration: duration } : null);
+          finish(blob ? { blob: blob, type: type, duration: duration } : null);
         };
-        try { finished.stop(); } catch (e) { cleanup(); resolve(null); }
+        try { finished.stop(); } catch (e) { cleanup(); finish(null); }
       });
     }
 
@@ -474,7 +529,7 @@ var RECORDER = (function () {
       preview: $("rec-preview"), status: $("rec-status"),
       send: $("rec-send"), save: $("rec-save"), dlTxt: $("rec-dl-txt"), dlAudio: $("rec-dl-audio"),
       dlZip: $("rec-dl-zip"), list: $("rec-list"), load: $("rec-load"), del: $("rec-del"),
-      clear: $("rec-clear"), unsupported: $("rec-unsupported")
+      clear: $("rec-clear"), clearAll: $("rec-clear-all"), unsupported: $("rec-unsupported")
     };
     if (!el.preview) return null;      // 页面没这块就安静退出，不影响其它功能
 
@@ -485,11 +540,17 @@ var RECORDER = (function () {
       el.meter.innerHTML = segs;
     }
 
-    var store = null;
-    try { store = createStore(idbAdapter("mtr_records", "recs")); } catch (e) { store = createStore(createMemoryAdapter()); }
+    var store = null, persists = true;
+    try { store = createStore(idbAdapter("mtr_records", "recs")); } catch (e) {
+      // 隐私模式或禁用了本地库：只能退到内存，刷新即失。这点必须让用户看见，不能假装存好了
+      store = createStore(createMemoryAdapter());
+      persists = false;
+    }
 
     var state = { id: newId(), title: "", createdAt: Date.now(), turns: [], duration: 0, audio: null, audioType: "" };
     var recordingStarted = false;
+    var lastWritten = null;   // 上次由代码写入预览的全文，用来判断用户是否手改过
+    var dirty = false;        // 有还没落档的内容（存档或下载都算落档）
 
     var rec = makeRecorder({
       onTick: function (secs) {
@@ -560,10 +621,29 @@ var RECORDER = (function () {
       });
     }
 
+    function writePreview(text, toBottom) {
+      if (!el.preview) return;
+      el.preview.value = text;
+      lastWritten = text;
+      if (toBottom) el.preview.scrollTop = el.preview.scrollHeight;
+    }
+
     function append(turn) {
       if (!turn) return;
       state.turns.push(turn);
-      if (el.preview) el.preview.value = appendLine(el.preview.value, state.turns, turn);
+      dirty = true;
+      if (el.preview) {
+        // 用户没动过正文时只追加一行：两小时会议几百条也不会每次都重建整段、不会把滚动条弹回顶部。
+        // 一旦检测到手改，就走完整重建，保证手改内容不被覆盖。
+        var untouched = lastWritten !== null && el.preview.value === lastWritten;
+        if (untouched) {
+          var body = stripNames(el.preview.value);
+          var line = lineOf(turn);
+          writePreview(namesLine(collectNames(state.turns)) + "\n\n" + (body ? body + "\n" + line : line), true);
+        } else {
+          writePreview(appendLine(el.preview.value, state.turns, turn), el.preview.value === "");
+        }
+      }
       refreshSpeakers();
     }
 
@@ -632,10 +712,11 @@ var RECORDER = (function () {
       var blob = data instanceof Blob ? data : new Blob([data], { type: mime || "text/plain;charset=utf-8" });
       var a = document.createElement("a");
       a.href = URL.createObjectURL(blob);
-      a.download = name;
+      a.download = plainFileName(name);
       document.body.appendChild(a);
       a.click();
-      setTimeout(function () { URL.revokeObjectURL(a.href); a.remove(); }, 0);
+      // 立刻 revoke 会让部分浏览器（Safari / 旧 WebView）拿不到下载内容
+      setTimeout(function () { URL.revokeObjectURL(a.href); a.remove(); }, 5000);
     }
 
     function snapshot() {
@@ -659,6 +740,11 @@ var RECORDER = (function () {
         tr.value = text;
         tr.dispatchEvent(new Event("input", { bubbles: true }));
       }
+      var todo = $("todo-input");
+      if (!todo || !todo.value.trim()) {
+        setStatus("已把成稿填进「会议转录」。还差待办表：质检要两份材料，粘上待办表会自动跑；没有待办表可以先让智能体提一版。");
+        return;
+      }
       var run = $("run");
       if (run) run.click();
       setStatus("已送入「会议转录」并跑了质检；录音与文字原稿点「保存原稿」可留档");
@@ -667,26 +753,38 @@ var RECORDER = (function () {
     if (el.save) el.save.addEventListener("click", function () {
       var s = snapshot();
       state.title = s.title;
-      store.save({
-        id: s.id, title: s.title, createdAt: s.createdAt, savedAt: Date.now(),
-        duration: s.duration, turns: s.turns, text: s.text,
-        audio: s.audio, audioType: s.audioType
+      var note = "";
+      store.get(s.id).then(function (existing) {
+        // 载入存档后再点保存，若沿用原 id 会把原件覆盖掉；这里改成另存新份
+        var id = existing ? newId() : s.id;
+        if (existing) note = "（原存档保留，这是新的一份）";
+        state.id = id;
+        return store.save({
+          id: id, title: s.title, createdAt: s.createdAt, savedAt: Date.now(),
+          duration: s.duration, turns: s.turns, text: s.text,
+          audio: s.audio, audioType: s.audioType
+        });
       }).then(function () {
-        setStatus("原稿已存到本机（" + (s.audio ? "文字 + 录音" : "仅文字") + "），可在下方列表载入");
+        dirty = false;
+        setStatus("原稿已存到本机" + note + "（" + (s.audio ? "文字 + 录音" : "仅文字") + "），可在下方列表载入" +
+          (persists ? "" : "；注意：本浏览器禁用了本地库，这份存档刷新后即失，建议同时「导出备份包 .zip」"));
         return refreshList();
       }).catch(function (err) {
-        setStatus("存档失败：" + (err && err.message ? err.message : "浏览器拒绝写入"));
+        setStatus("存档失败：" + (err && err.message ? err.message : "浏览器拒绝写入") +
+          "。可以改用「导出备份包 .zip」带走，不依赖本机存档。");
       });
     });
 
     if (el.dlTxt) el.dlTxt.addEventListener("click", function () {
-      download("原稿_" + fileStamp(state.createdAt) + ".txt", buildBackup(snapshot()), "text/plain;charset=utf-8");
+      download("原稿_" + safeName(title(), "会议") + "_" + fileStamp(state.createdAt) + ".txt", buildBackup(snapshot()), "text/plain;charset=utf-8");
+      dirty = false;
+      setStatus("原稿已下载（.txt）——文件在浏览器的下载目录里");
     });
 
     if (el.dlAudio) el.dlAudio.addEventListener("click", function () {
       if (!state.audio) { setStatus("还没有录音可下载——先点「开始录音」"); return; }
       var ext = state.audioType.indexOf("mp4") >= 0 ? "m4a" : "webm";
-      download("录音_" + fileStamp(state.createdAt) + "." + ext, state.audio, state.audioType);
+      download("录音_" + safeName(title(), "会议") + "_" + fileStamp(state.createdAt) + "." + ext, state.audio, state.audioType);
     });
 
     if (el.dlZip) el.dlZip.addEventListener("click", function () {
@@ -697,8 +795,9 @@ var RECORDER = (function () {
       ];
       if (s.audio) files.push({ name: "录音." + (s.audioType.indexOf("mp4") >= 0 ? "m4a" : "webm"), data: s.audio });
       var bytes = zip(files, s.createdAt);
-      download("会议原稿_" + fileStamp(s.createdAt) + ".zip", bytes, "application/zip");
-      setStatus("备份包已生成：" + files.length + " 个文件");
+      download("会议原稿_" + safeName(s.title, "会议") + "_" + fileStamp(s.createdAt) + ".zip", bytes, "application/zip");
+      dirty = false;
+      setStatus("备份包已生成：" + files.length + " 个文件（原稿.txt + meta.json" + (s.audio ? " + 录音" : "") + "）");
     });
 
     function refreshList() {
@@ -713,6 +812,7 @@ var RECORDER = (function () {
           : '<option value="">本机还没有存档</option>';
         if (el.del) el.del.disabled = !rows.length;
         if (el.load) el.load.disabled = !rows.length;
+        if (el.clearAll) el.clearAll.disabled = !rows.length;
         return rows;
       }).catch(function () { return []; });
     }
@@ -731,7 +831,8 @@ var RECORDER = (function () {
         state.audioType = r.audioType || "";
         if (el.title) el.title.value = state.title;
         if (el.time) el.time.textContent = clock(state.duration);
-        if (el.preview) el.preview.value = r.text || buildScript(state.turns);
+        if (el.preview) { el.preview.value = r.text || buildScript(state.turns); lastWritten = el.preview.value; }
+        dirty = false;
         refreshSpeakers();
         setStatus("已载入存档：" + (r.title || "未命名") + (state.audio ? "（含录音，可下载）" : ""));
       });
@@ -746,7 +847,7 @@ var RECORDER = (function () {
       });
     });
 
-    if (el.clear) el.clear.addEventListener("click", function () {
+    function resetState() {
       state = { id: newId(), title: "", createdAt: Date.now(), turns: [], duration: 0, audio: null, audioType: "" };
       recordingStarted = false;
       if (el.title) el.title.value = "";
@@ -754,10 +855,51 @@ var RECORDER = (function () {
       if (el.line) el.line.value = "";
       if (el.speaker) el.speaker.value = "";
       if (el.markNote) el.markNote.value = "";
-      if (el.preview) el.preview.value = "";
-      setStatus("已清空当前记录");
+      if (el.preview) { el.preview.value = ""; lastWritten = ""; }
+      dirty = false;
       refreshSpeakers();
+    }
+
+    if (el.clear) el.clear.addEventListener("click", function () {
+      // 录音中清空会让旧音频落进新记录：先停录再清，并明确告诉用户这段音频没保存
+      if (rec.isRecording() || rec.isPaused()) {
+        rec.stop().then(function () {
+          resetState();
+          paintLevel(0);
+          setStatus("已停止录音并清空当前记录（这段音频没有保存）");
+        });
+        return;
+      }
+      resetState();
+      setStatus("已清空当前记录");
     });
+
+    if (el.clearAll) el.clearAll.addEventListener("click", function () {
+      store.list().then(function (rows) {
+        if (!rows.length) { setStatus("本机没有可清除的存档"); return; }
+        if (typeof confirm === "function" &&
+            !confirm("清除本机全部 " + rows.length + " 份原稿存档？录音一并删除，不可撤销。")) return;
+        return Promise.all(rows.map(function (r) { return store.remove(r.id); })).then(function () {
+          setStatus("已清除本机全部存档（" + rows.length + " 份）");
+          return refreshList();
+        });
+      }).catch(function (err) {
+        setStatus("清除失败：" + (err && err.message ? err.message : "浏览器拒绝"));
+      });
+    });
+
+    // 录音中或录了内容还没落档就关页面，等于把这场会直接扔掉：拦一次并说清原因。
+    // 已存档 / 已下载过就放行，不要变成骚扰。
+    if (typeof window !== "undefined" && typeof window.addEventListener === "function") {
+      window.addEventListener("beforeunload", function (e) {
+        var hot = rec.isRecording() || rec.isPaused();
+        if (!hot && !dirty) return undefined;
+        var msg = hot ? "还在录音：关闭页面会丢掉这段音频" : "这段会议记录还没保存：关闭页面会丢掉";
+        e.preventDefault();
+        e.returnValue = msg;
+        return msg;
+      });
+    }
 
     // 首次进来：给一个占位会议名，并把存档列表拉出来
     if (el.title && !el.title.value) el.title.placeholder = defaultTitle();
@@ -781,8 +923,12 @@ var RECORDER = (function () {
     namesLine: namesLine,
     buildScript: buildScript,
     appendLine: appendLine,
+    lineOf: lineOf,
+    stripNames: stripNames,
     buildBackup: buildBackup,
     buildMeta: buildMeta,
+    safeName: safeName,
+    plainFileName: plainFileName,
     crc32: crc32,
     zip: zip,
     createMemoryAdapter: createMemoryAdapter,

@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>会议待办质检器 · 生成—质检—修正闭环演示</title>
 <style>
   :root{
@@ -224,8 +224,19 @@
     .issues{grid-template-columns:1fr}
     .steps{grid-template-columns:repeat(2,1fr)}
   }
+  /* 打开方式条：电脑 / 手机 / 离线三条路，窄屏也不横滚 */
+  .open-strip{display:flex;flex-wrap:wrap;gap:6px 18px;align-items:baseline;margin:14px 0 0;padding:10px 12px;
+    background:#fff;border:1px solid var(--line);border-radius:10px;font-size:12.5px;color:var(--muted)}
+  .open-strip b{color:var(--ink);font-weight:650}
+  .open-strip a{color:var(--accent)}
+  header.top{padding-top:env(safe-area-inset-top)}
+  @media (pointer:coarse){
+    /* 触摸输入：44px 目标 + 16px 输入框（iOS 聚焦时不再放大整页） */
+    .btn{padding:11px 14px;min-height:44px;font-size:14px}
+    textarea,input[type="text"],#tr-input,#todo-input,#import-input{font-size:16px;line-height:1.7}
+  }
   @media (max-width:640px){
-    .wrap{padding:0 16px}
+    .wrap{padding:0 max(16px,env(safe-area-inset-left))}
     h1{font-size:23px;letter-spacing:-.2px}
     h1 br{display:none}
     .lede{font-size:14.5px}
@@ -245,10 +256,14 @@
     thead th,tbody td{padding:8px 10px}
     .hide-sm{display:none}
     .lrow{grid-template-columns:56px 1fr 78px;font-size:12.3px}
-    .btn{padding:9px 13px;min-height:38px}
+    .btn{padding:10px 13px;min-height:44px}
     thead th{white-space:normal}
     .panel-head{padding:10px 12px}
     .issue{padding:13px 14px}
+    /* 六列宽表在窄屏横滚，宁可滚也不裁字 */
+    .panel{overflow-x:auto;-webkit-overflow-scrolling:touch}
+    .panel table{min-width:560px}
+    .open-strip{font-size:13px}
   }
   @media (prefers-reduced-motion:reduce){
     html{scroll-behavior:auto}
@@ -279,6 +294,7 @@
       <a href="#asr">录音稿</a>
       <a href="#limits">边界</a>
       <a href="agent.html">智能体</a>
+      <a href="workbench.html#rec">会议记录</a>
       <a href="workbench.html">质检工作台</a>
     </nav>
   </div>
@@ -290,6 +306,11 @@
       <p class="eyebrow">办公协同与组织效率 · 参赛作品演示</p>
       <h1>会议待办的真实缺口，不在“能否生成”，<br>而在“生成之后是否可信”。</h1>
       <p class="lede">输入一份 68 行、1,211 字的会议转录，先产出一版待办表（生成版 11 条），再用四个维度逐条校验（查出 8 项问题），最后给出可执行的修正版（14 条）与按人负载视图。每条待办都能点开，回看它在原文里的那一句。</p>
+      <div class="open-strip" id="open" aria-label="怎么打开">
+        <span><b>电脑</b>：下载 workbench.html 双击打开，或把文件拖进 Chrome / Edge</span>
+        <span><b>手机</b>：用系统浏览器打开 cbc080303.github.io/baiduai/workbench.html（长按整段可复制）；在微信里请先「在浏览器打开」，否则录不了音</span>
+        <span><b>离线</b>：拷文件照用；录音要 https 或 localhost，纯离线只能文字录入 + 质检</span>
+      </div>
       <div class="factbar">
         <span class="fact">输入 <b>1,211</b> 字符 · <b>41</b> 句 · <b>6</b> 名参会人</span>
         <span class="fact">依据逐字校验 <b>10/11</b> 命中</span>
