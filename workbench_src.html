@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>会议待办质检工作台</title>
 <style>
   :root{
@@ -66,7 +66,7 @@
   input[type=checkbox]{accent-color:var(--accent)}
 
   .actions{position:sticky;bottom:0;z-index:5;background:rgba(255,255,255,.94);border-top:1px solid var(--line);
-    padding:12px 0;margin-top:16px}
+    padding:12px 0 calc(12px + env(safe-area-inset-bottom));margin-top:16px}
   .actions .row{margin:0}
   .status{font-size:13px;color:var(--muted);margin:0}
 
@@ -141,6 +141,31 @@
   .rec-store{border-top:1px dashed var(--line);padding-top:12px;margin-top:14px}
   .rec-store .rec-label{font-size:12.5px;color:var(--muted)}
   #rec-list{flex:1;min-width:210px;font:inherit;font-size:13px;padding:7px 10px;border:1px solid var(--line-strong);border-radius:8px;background:#fff;color:var(--ink)}
+  /* 打开方式条：电脑 / 手机 / 离线三条路，窄屏也不横滚 */
+  .open-strip{display:flex;flex-wrap:wrap;gap:6px 18px;align-items:baseline;margin:14px 0 0;padding:10px 12px;
+    background:#fff;border:1px solid var(--line);border-radius:10px;font-size:12.5px;color:var(--muted)}
+  .open-strip b{color:var(--ink);font-weight:650}
+  .open-strip a{color:var(--accent)}
+  @media (pointer:coarse){
+    /* 触摸输入：44px 目标 + 16px 输入框（iOS 聚焦时不再放大整页） */
+    button{min-height:44px;padding:11px 14px;font-size:14px}
+    textarea,input[type="text"],#rec-title,#rec-speaker,#rec-mark-note,#rec-list,#import-input{font-size:16px;line-height:1.7}
+  }
+  @media (max-width:640px){
+    .wrap{padding-left:max(18px,env(safe-area-inset-left));padding-right:max(18px,env(safe-area-inset-right))}
+    .topbar{height:auto;padding:8px 0;flex-wrap:wrap;gap:6px}
+    .nav{width:100%;overflow-x:auto;white-space:nowrap}
+    .hero{padding:26px 0 18px}
+    h1{font-size:24px}
+    .card{padding:14px}
+    textarea{min-height:150px}
+    #rec-line{min-height:72px}
+    #rec-preview{min-height:132px}
+    /* 六列宽表在窄屏横滚，不裁字 */
+    section.out{overflow-x:auto;-webkit-overflow-scrolling:touch}
+    section.out table{min-width:560px}
+    .open-strip{font-size:13px}
+  }
   @media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
 </style>
 </head>
@@ -159,6 +184,11 @@
     <p class="eyebrow">MEETING TODO QC · WORKBENCH</p>
     <h1>会议待办质检工作台</h1>
     <p class="lede">粘贴转录与待办表，一次跑完输入体检、D 依据回查、A 遗漏候选、C 字段核查与风险分档。全部在本机完成，不联网、不上传、不调模型。</p>
+    <div class="open-strip" id="open" aria-label="怎么打开">
+      <span><b>电脑</b>：把这个文件双击打开，或拖进 Chrome / Edge；断网也能用</span>
+      <span><b>手机</b>：用系统浏览器打开 cbc080303.github.io/baiduai/workbench.html（长按整段可复制）；在微信里请先「在浏览器打开」，否则录音会被拦</span>
+      <span><b>录音</b>：要麦克风授权 + https（线上或 localhost）；没有也能用文字录入 + 质检</span>
+    </div>
   </div>
 </header>
 
