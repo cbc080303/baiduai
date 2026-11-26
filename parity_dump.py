@@ -1,5 +1,7 @@
 # -*- coding: utf-8 -*-
-"""对拍数据源：用 Python 版 qc_tools.py 跑两组语料，输出 JSON 供 test_parity.js 比对。
+"""对拍数据源：用 Python 版 qc_tools.py 跑三组有表的语料，输出 JSON 供 test_parity.js 比对。
+
+（第 3 组 VCSum 没有生成版表格，不进对拍；它只用于语料结构统计。）
 
 用法：python parity_dump.py            # 打印 JSON
       node test_parity.js              # 自动比对 JS 版与 Python 版
@@ -26,6 +28,7 @@ def rows_csv(name):
 CASES = [
     ("示例转录", "会议转录_产品运营周会_示例.txt", rows_demo()),
     ("第2组实录", "会议转录_公开实录_第2组.txt", rows_csv("会议待办_生成版_第2组.csv")),
+    ("第4组真实内部会", "会议转录_第4组_真实内部会议.txt", rows_csv("会议待办_生成版_第4组.csv")),
 ]
 
 

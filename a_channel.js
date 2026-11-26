@@ -1,7 +1,8 @@
-// A 通道（按人切片查遗漏）—— qc_tools.py v1.2 slice_scan 的等价 JS 实现
+// A 通道（按人切片查遗漏）—— qc_tools.py v1.3 slice_scan 的等价 JS 实现
 // 用途：供演示页内联使用（浏览器），也可被 node 直接加载做对拍验证。
 // 原则：只输出“候选”，不下“遗漏”结论；机构主体单列清单，不进候选表、不计精确率。
-// v1.2 与 Python 同步：规则①程序性动词句、规则②名单句、规则③机构主体。
+// v1.3 与 Python 同步：规则①程序性动词句、②名单句、③机构主体、④参会对象剥离；
+//    姓名正则放宽到 1 字，支持“甲/乙/丙/丁”这类单字代称脱敏（此前会整条静默失效）。
 
 const A_CHANNEL = (function(){
   const VERBS = ["修","做","出","拉","拿","发","对","谈","确认","整理","补齐","统一",
@@ -21,6 +22,10 @@ const A_CHANNEL = (function(){
   const ORG_COMMIT_RE = /(必须|确保|务必|完成|落实|下达|出台|印发|建立|推动|加快|抓好|做好|研究|推进|发行|统一|扩大|完善)/;
   const PAST_RE = /(今年以来|近年来|近几年|去年|过去|此前|已经|曾经|早前|原来)/;
 
+  // v1.3 规则④：参会对象（“把 X 和 Y 都叫上”“和 X 一起”）不是责任人
+  // 第 4 组实测：主持人说“把产品负责人和丙都叫上”，丙被误判成“丙被指派拉会”
+  const INVITEE_RE = /把[^。！？；]{0,30}?(?:都)?叫上|(?:和|与|跟)[\u4e00-\u9fa5]{1,4}一起/;
+
   const escRe = s => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
   function stripRecipients(text){
@@ -28,6 +33,11 @@ const A_CHANNEL = (function(){
     t = t.replace(/(发|给|抄送|报给|通知|告诉|回复)(你|您)/g, "");
     t = t.replace(/抄送[\u4e00-\u9fa5]{2,3}/g, "");
     return t;
+  }
+
+  // v1.3 规则④：先剥离被召集的参会对象，再判责任人
+  function stripInvitees(text){
+    return text.replace(INVITEE_RE, "");
   }
 
   // 解析：返回 { names, body:[[speaker, sentence], ...] }
@@ -43,7 +53,8 @@ const A_CHANNEL = (function(){
     }
     const body = [];
     for (const line of lines){
-      const m = line.trim().match(/^([\u4e00-\u9fa5]{2,4})[：:](.*)$/);
+      // v1.3：姓名由 2–4 字放宽为 1–4 字，兼容单字代称脱敏
+      const m = line.trim().match(/^([\u4e00-\u9fa5]{1,4})[：:](.*)$/);
       if (!m || names.indexOf(m[1]) < 0) continue;
       const parts = m[2].trim().match(/[^。！？；]*[。！？；]|[^。！？；]+/g) || [];
       for (const p of parts) if (p.trim()) body.push([m[1], p.trim()]);
@@ -76,7 +87,7 @@ const A_CHANNEL = (function(){
 
   function personsIn(s, names){
     const found = new Set();
-    const cleaned = stripRecipients(s.text);
+    const cleaned = stripInvitees(stripRecipients(s.text));
     for (const nm of names) if (cleaned.indexOf(nm) >= 0) found.add(nm);
     if (found.size === 0 && cleaned.indexOf("你") >= 0){
       const tgt = s.youTarget || s.prev;
@@ -218,7 +229,15 @@ const A_CHANNEL = (function(){
     const p = parseTranscript(raw);
     const sentences = buildSentences(p.body);
     const res = sliceScan(p.names, sentences, rows || []);
-    return {names: p.names, count: sentences.length, cands: res.cands, low: res.low, orgs: res.orgs};
+    // v1.3：把“静默归零”变成可解释的提示。切句为 0 时最可能的原因是
+    // 发言行格式不对或姓名与名单不一致（单字代称曾经整条失配且不报错）。
+    let warn = null;
+    if (!p.names.length){
+      warn = "没读到「参会人：」行";
+    } else if (!sentences.length){
+      warn = "读到了名单（" + p.names.length + " 人），但一句发言都没切出来——请检查每行是否为「姓名：内容」，且姓名与「参会人：」行里的一致。单字代称（甲/乙/丙/丁）已支持。";
+    }
+    return {names: p.names, count: sentences.length, cands: res.cands, low: res.low, orgs: res.orgs, warn: warn};
   }
 
   return {scan, _sliceScan: sliceScan};

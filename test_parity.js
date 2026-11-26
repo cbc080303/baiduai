@@ -1,5 +1,6 @@
-// 对拍脚本：JS 版 A 通道（a_channel.js，v1.2）vs Python 版 qc_tools.py（v1.2）
-// 跑法：node test_parity.js        —— 两组语料，逐条比对，任一项不一致即退出码 1
+// 对拍脚本：JS 版 A 通道（a_channel.js，v1.3）vs Python 版 qc_tools.py（v1.3）
+// 跑法：node test_parity.js   —— 三组有表的语料，逐条比对，任一项不一致即退出码 1
+// 第 3 组 VCSum 无生成版表格，不进对拍
 const fs = require("fs");
 const path = require("path");
 const {execFileSync} = require("child_process");
@@ -51,6 +52,7 @@ function csvRows(file){
 const CASES = [
   ["示例转录", "会议转录_产品运营周会_示例.txt", demoRows()],
   ["第2组实录", "会议转录_公开实录_第2组.txt", csvRows("会议待办_生成版_第2组.csv")],
+  ["第4组真实内部会", "会议转录_第4组_真实内部会议.txt", csvRows("会议待办_生成版_第4组.csv")],
 ];
 
 function norm(items, keys){
@@ -103,7 +105,7 @@ const js = jsSide();
 const py = pySide();
 const problems = [];
 
-console.log("=== 对拍：a_channel.js v1.2 vs qc_tools.py v1.2 ===");
+console.log("=== 对拍：a_channel.js v1.3 vs qc_tools.py v1.3 ===");
 for (const [label] of CASES){
   console.log(`--- ${label} ---`);
   cmp(label, "names", js[label].names, py[label].names, problems);
@@ -119,4 +121,4 @@ if (problems.length){
   problems.forEach(p => console.log(p));
   process.exit(1);
 }
-console.log("\nALL PARITY PASS：两组语料、五类输出逐条一致");
+console.log("\nALL PARITY PASS：三组语料（含单字代称的第 4 组）、五类输出逐条一致");
