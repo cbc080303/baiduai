@@ -117,7 +117,7 @@ store.save({ id: "a", title: "早会", createdAt: 100, turns: [turns[0]] })
 
     // ---------- 9 工作台页面结构
     const html = fs.readFileSync(path.join(__dirname, "workbench.html"), "utf8");
-    ["rec-start", "rec-pause", "rec-stop", "rec-say", "rec-mark", "rec-preview",
+    ["rec-start", "rec-pause", "rec-stop", "rec-float", "rec-say", "rec-mark", "rec-preview",
       "rec-send", "rec-save", "rec-dl-txt", "rec-dl-audio", "rec-dl-zip", "rec-list", "rec-load", "rec-del"]
       .forEach((id) => ok("页面含 #" + id, html.includes('id="' + id + '"')));
     ok("页面挂载记录器", html.includes("RECORDER.mount"));
