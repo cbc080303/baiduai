@@ -55,6 +55,18 @@
   .metric .d{font-size:12.5px;color:var(--muted);margin-top:6px}
   .up{color:var(--ok)} .down{color:var(--p1)}
 
+  .groups{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin:20px 0 0}
+  .grp{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:14px 16px;box-shadow:var(--shadow)}
+  .grp.hl{border-color:#d9a441;box-shadow:0 0 0 2px var(--p1-bg) inset}
+  .grp .g-k{font-size:12.5px;color:var(--muted)}
+  .grp .g-v{font-size:21px;font-weight:650;line-height:1.15;margin:4px 0 2px}
+  .grp .g-v small{font-size:12.5px;color:var(--faint);font-weight:400;margin-left:3px}
+  .grp .g-d{font-size:12px;color:var(--faint);line-height:1.5}
+  .grp-note{margin-top:10px;background:var(--p1-bg);border:1px solid #f0d9b5;color:#7a4a08;border-radius:8px;padding:10px 14px;font-size:13px}
+  .grp-note b{color:#5c3606}
+  @media (max-width:900px){.groups{grid-template-columns:repeat(2,1fr)}}
+  @media (max-width:560px){.groups{grid-template-columns:1fr}}
+
   section{padding:38px 0;border-bottom:1px solid var(--line)}
   .sec-head{display:flex;align-items:baseline;gap:12px;margin-bottom:6px}
   .sec-num{font-size:12px;color:#fff;background:var(--accent);border-radius:4px;padding:2px 7px;letter-spacing:.06em;font-weight:600}
@@ -220,6 +232,29 @@
           <div class="d">6 条需补时限 · 1 条待人工判断</div>
         </div>
       </div>
+      <div class="groups" aria-label="四组语料实测">
+        <div class="grp">
+          <div class="g-k">第 1 组 · 合成周会</div>
+          <div class="g-v">4 <small>/ 4</small></div>
+          <div class="g-d">41 句 · 6 人；依据 10/11；生成 11 → 修正 14</div>
+        </div>
+        <div class="grp">
+          <div class="g-k">第 2 组 · 财政部公开实录</div>
+          <div class="g-v">0 <small>/ 5</small></div>
+          <div class="g-d">108 句 · 5 人；依据 8/9；候选 5 条成立 0 条</div>
+        </div>
+        <div class="grp">
+          <div class="g-k">第 3 组 · VCSum 抽样 28 场</div>
+          <div class="g-v">0 <small>/ 28</small></div>
+          <div class="g-d">内部分工会议 0 场；三要素齐全 0/145 句</div>
+        </div>
+        <div class="grp hl">
+          <div class="g-k"><b>第 4 组 · 真实内部会议</b></div>
+          <div class="g-v">1 <small>/ 1</small></div>
+          <div class="g-d">60 句 · 4 人（单字代称）；依据 9/9；修正版 10 条</div>
+        </div>
+      </div>
+      <div class="grp-note"><b>第 4 组要点：候选 0 条不等于没问题。</b>首版 A 通道 0 条候选，逐句核对却漏了 1 条（丁公布批次日期，与表内条目同处一句被吸收）；改用动作否决后召回 1 条，但人物仍标错（句级判定），须人工改判。</div>
       <div class="disclaimer">数据说明：本页使用合成会议转录（人物、公司、数据均为虚构），用于演示方法与可复现性，不代表真实企业案例。</div>
     </div>
   </div>
