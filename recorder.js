@@ -684,12 +684,47 @@ var RECORDER = (function () {
       el.line.focus();
     }
 
+    // 整页崩塌（内置浏览器上端点识别会崩，已实测）或误关时，唯一能救回内容的是草稿：
+    // 每落一行就往 localStorage 存一份，重开页面自动找回。写不进去也不打断记录。
+    var DRAFT_KEY = "mtr_draft_v2";
+    var draftTimer = null, draftOff = false;
+
+    function saveDraft() {
+      if (draftOff) return;
+      if (draftTimer) return;
+      draftTimer = setTimeout(function () {
+        draftTimer = null;
+        try {
+          if (!state.turns.length) { localStorage.removeItem(DRAFT_KEY); return; }
+          localStorage.setItem(DRAFT_KEY, JSON.stringify({
+            at: Date.now(), title: title(), createdAt: state.createdAt,
+            duration: currentAt() || 0, turns: state.turns
+          }));
+        } catch (e) { draftOff = true; }   // 隐私模式或配额满：草稿失效，但记录照常
+      }, 600);
+    }
+
+    function readDraft() {
+      try {
+        var raw = localStorage.getItem(DRAFT_KEY);
+        if (!raw) return null;
+        var d = JSON.parse(raw);
+        if (!d || !d.turns || !d.turns.length) return null;
+        return d;
+      } catch (e) { return null; }
+    }
+
+    function dropDraft() {
+      try { localStorage.removeItem(DRAFT_KEY); } catch (e) {}
+    }
+
     // 页面与浮窗共用同一条写入路径：浮窗里记的一条，和页面里记的完全等价
     function submitText(text, who) {
       var t = oneLine(text || "");
       if (!t) return false;
       var at = currentAt();
       append({ at: at == null ? state.duration : at, speaker: who, text: t });
+      saveDraft();
       setStatus("记下 1 条（共 " + state.turns.filter(function (x) { return !x.mark; }).length + " 条）");
       return true;
     }
@@ -697,6 +732,7 @@ var RECORDER = (function () {
     function markNow(note) {
       var at = currentAt();
       append({ at: at == null ? state.duration : at, mark: note || "打点" });
+      saveDraft();
       setStatus("已打点" + (note ? "：" + note : ""));
     }
 
@@ -946,6 +982,13 @@ var RECORDER = (function () {
           }
         },
         onError: function (msg) { asrSay(msg); },
+        // 内置浏览器（Electron 壳）实测碰端上识别会整页崩：这类环境不进端上，
+        // 直接按浏览器默认（云端）走，并把「音频会外发」这句说清楚，不偷偷改口径。
+        onLocalBlocked: function (risk) {
+          asrSay("当前浏览器（" + (risk === "electron" ? "Electron 内核" : "内置浏览器") +
+            "）在端上识别上会让整页崩（已实测），已改用浏览器默认方式——音频会发给浏览器厂商；" +
+            "要音频不出本机，请用 Chrome / Edge 打开本页");
+        },
         onState: function (s) {
           asrOn = (s === "listening-local" || s === "listening-remote");
           asrLabel(asrOn);
@@ -963,25 +1006,18 @@ var RECORDER = (function () {
       return { used: true, mode: asrMode(), lang: asrLang(), engine: typeof ASR !== "undefined" ? "Web Speech API " + ASR.VERSION : "Web Speech API" };
     }
 
-    // 端上语言包必须在用户手势里安装：这次点击本身就是手势，顺着点完就装
+    // 端上语言包要不要装，只能由用户显式点一次（install 需要用户手势）；
+    // 自动流程里不再先探「语言包可不可下载」——那个探测在部分浏览器会崩渲染进程。
     function startAsr(a) {
       a.setLang(asrLang());
       a.setLocal(asrMode() !== "remote");
       a.open().then(function (r) {
         if (r === "running") return;
-        if (r === "need-install") {
-          asrSay("端上语言包还没下载，正在安装（一次性联网下载，之后可离线识别）…");
-          a.installLocal().then(function (ok) {
-            if (ok) { asrSay("语言包装好了，开始识别…"); return a.start(); }
-            asrSay("语言包没装上：可把「识别方式」改为云端识别，或直接用平台转写。");
-          });
-          return;
-        }
         if (r === "need-choice") {
-          asrSay("这个浏览器没有端上识别（Chrome 139+ / Firefox 160+ 才有）。把「识别方式」改成云端识别（音频会发给浏览器厂商），或直接用平台转写。");
+          asrSay("这个浏览器说识别服务不可用（多半是网络或服务区域限制）。可先用「记一条」手敲，或直接用会议平台转写导出后贴回来。");
           return;
         }
-        asrSay("识别没能启动：" + r + "；文字录入不受影响。");
+        asrSay("识别没能启动：" + r + "；文字录入不受影响。识别包缺失会在这行提示，按提示改云端或换 Chrome。");
       });
     }
 
@@ -1164,6 +1200,7 @@ var RECORDER = (function () {
       sessionAt = 0;
       asrUsed = false;
       prevSpeaker = "";
+      dropDraft();          // 主动清空就不该再被「找回草稿」弹回来
       if (el.title) el.title.value = "";
       if (el.time) el.time.textContent = "00:00";
       if (el.line) el.line.value = "";
@@ -1220,6 +1257,22 @@ var RECORDER = (function () {
 
     // 首次进来：给一个占位会议名，并把存档列表拉出来
     if (el.title && !el.title.value) el.title.placeholder = defaultTitle();
+
+    // 上次没落档就崩了/被关了：把草稿捡回来，别让一场会白丢。
+    // 只在当前是空记录时恢复，避免把刚开的会盖掉。
+    (function restoreDraft() {
+      var d = readDraft();
+      if (!d || !d.turns || !d.turns.length) return;
+      state.createdAt = d.createdAt || Date.now();
+      state.turns = d.turns.slice();
+      if (d.title && el.title) el.title.value = d.title;
+      writePreview(buildScript(state.turns), true);
+      refreshSpeakers();
+      dirty = true;
+      var n = state.turns.filter(function (t) { return !t.mark; }).length;
+      setStatus("已自动找回上次没保存的记录（" + n + " 条）——整页崩了或误关都还在，点「保存原稿」落档");
+    })();
+
     refreshList();
     paintLevel(0);
 

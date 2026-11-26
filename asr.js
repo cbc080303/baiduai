@@ -11,12 +11,19 @@
  *
  * 隐私：Web Speech 默认把音频发给浏览器厂商的识别服务（Chrome → Google）。
  * Chrome 139+ / Firefox 160+ 支持 `processLocally = true` 的端上识别，音频不出本机。
- * 本模块默认**只走端上**；端上不可用时把选择权交给用户，不偷偷联网。
+ *
+ * 端上识别的实测边界（2026-11-26 内置浏览器实测，写在代码里免得下次又踩）：
+ *   - 内置浏览器（Electron 43 / Chromium 150）里，`available({langs, processLocally:true})`
+ *     与 `start()` 且 `processLocally=true` 都会让**渲染进程崩溃**（页面直接变 about:blank）；
+ *     同一环境下 `available({langs})`（不带 processLocally）正常返回 "available"。
+ *   - 也就是说「先探测端上、再用端上」这条路在这些环境里探测本身就是崩溃点，try/catch 拦不住。
+ *     所以本模块不再调用带 processLocally 的 available()：认出这类环境就整段绕开端上，
+ *     其余环境直接 start()（失败由 onerror 的 language-not-supported 兜底提示）。
  */
 var ASR = (function () {
   "use strict";
 
-  var VERSION = "1.1";
+  var VERSION = "1.2";
   var DEFAULT_LANG = "zh-CN";
   var LANGS = [
     { code: "zh-CN", label: "中文普通话" },
@@ -30,12 +37,22 @@ var ASR = (function () {
     return w.SpeechRecognition || w.webkitSpeechRecognition || null;
   }
 
-  // 端上识别是否可用：'available' | 'downloadable' | 'unavailable' | 'unknown'
-  function localStatus(win, lang) {
+  // 哪些环境碰端上识别会崩：内置浏览器（Electron/桌面客户端壳）已实测必崩。
+  // 返回 "" 表示没有已知风险，可用端上。
+  function riskyLocal(win) {
+    var w = win || (typeof window !== "undefined" ? window : null);
+    var ua = (w && w.navigator && w.navigator.userAgent) || "";
+    if (/Electron/i.test(ua)) return "electron";
+    if (/DuMate|qianfan-desk|qianfan_desk/i.test(ua)) return "embedded";
+    return "";
+  }
+
+  // 语言是否可识别（安全探测：**不带** processLocally，那个参数会崩渲染进程）
+  function serviceStatus(win, lang) {
     var C = ctor(win);
     if (!C || typeof C.available !== "function") return Promise.resolve("unknown");
     try {
-      var r = C.available({ langs: [lang || DEFAULT_LANG], processLocally: true });
+      var r = C.available({ langs: [lang || DEFAULT_LANG] });
       if (r && typeof r.then === "function") {
         return r.then(function (s) { return String(s || "unknown"); }, function () { return "unknown"; });
       }
@@ -45,7 +62,11 @@ var ASR = (function () {
     }
   }
 
-  // 安装端上语言包：必须在用户手势里调用，否则浏览器会拒
+  // 兼容旧调用名：不带 processLocally 的安全探测
+  function localStatus(win, lang) { return serviceStatus(win, lang); }
+
+  // 安装端上语言包：必须在用户手势里调用，否则浏览器会拒。
+  // 注意：要不要装、能不能装，只能由用户显式点一次，不在自动流程里调。
   function installLocal(win, lang) {
     var C = ctor(win);
     if (!C || typeof C.install !== "function") return Promise.resolve(false);
@@ -66,7 +87,7 @@ var ASR = (function () {
       "network": "识别服务连不上：端上识别不需要网络，云端识别需要",
       "no-speech": "这段没听到说话",
       "aborted": "识别被中止",
-      "language-not-supported": "这个语言没有端上语言包：可先安装，或改用云端识别",
+      "language-not-supported": "这个语言没有可用的识别包：换成中文普通话、改云端识别，或直接用平台转写",
       "phrases-not-supported": "浏览器不支持自定义短语"
     };
     return map[code] || ("识别出错：" + (code || "未知"));
@@ -139,22 +160,25 @@ var ASR = (function () {
 
     function supported() { return !!C; }
 
-    // 端上不可用时由调用方决定：opts.onNeedChoice
+    // 打开：先认环境，再决定能不能碰端上。
+    // 关键：这里**不调用** available({processLocally:true})——它在部分内嵌浏览器里直接崩渲染进程。
     function open() {
       if (!C) return Promise.resolve("unsupported");
+      var risk = riskyLocal(win);
+      if (risk) {
+        // 这类环境连探测都会崩：直接按浏览器默认（云端）走，并把原因交回页面
+        local = false;
+        hooks("onLocalBlocked", risk);
+        return Promise.resolve(start());
+      }
       if (!local) return Promise.resolve(start());
-      return localStatus(win, lang).then(function (st) {
-        if (st === "available") return start();
-        if (st === "downloadable") {
-          if (typeof opts.onNeedInstall === "function") opts.onNeedInstall(lang);
-          return "need-install";
+      return serviceStatus(win, lang).then(function (st) {
+        if (st === "unavailable") {
+          local = false;
+          hooks("onNeedChoice", lang);
+          return "need-choice";
         }
-        if (st === "unknown") {
-          // 老浏览器没有 available()：仍尝试 processLocally，失败再报错
-          return start();
-        }
-        if (typeof opts.onNeedChoice === "function") opts.onNeedChoice(lang);
-        return "need-choice";
+        return start();      // 端上用「直接开」，失败由 onerror 兜底，不做会崩的预检
       });
     }
 
@@ -191,6 +215,10 @@ var ASR = (function () {
         var code = (e && e.error) || "unknown";
         // no-speech 是常态，不当错误刷屏
         if (code !== "no-speech") hooks("onError", errorText(code));
+        if (code === "language-not-supported" && local) {
+          // 端上模型缺失就是这条：直接告诉用户换云端，不让他反复点
+          hooks("onError", "这个浏览器没有「" + lang + "」的端上识别包：改用云端识别（音频会发给浏览器厂商），或直接用平台转写");
+        }
         if (code === "not-allowed" || code === "service-not-allowed") {
           stoppedByUser = true;
           running = false;
@@ -273,7 +301,7 @@ var ASR = (function () {
       setLocal: setLocal,
       isRunning: isRunning,
       current: current,
-      localStatus: function () { return localStatus(win, lang); },
+      localStatus: function () { return serviceStatus(win, lang); },
       installLocal: function () { return installLocal(win, lang); }
     };
   }
@@ -283,6 +311,8 @@ var ASR = (function () {
     DEFAULT_LANG: DEFAULT_LANG,
     LANGS: LANGS,
     ctor: ctor,
+    riskyLocal: riskyLocal,
+    serviceStatus: serviceStatus,
     localStatus: localStatus,
     installLocal: installLocal,
     errorText: errorText,

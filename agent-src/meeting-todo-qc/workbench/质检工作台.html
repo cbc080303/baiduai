@@ -236,7 +236,7 @@
 
   <div class="card rec" id="rec" style="grid-column:1/-1">
     <h2><span class="idx" aria-hidden="true">R</span>会议记录 · 边录边记 <span class="rec-opt">可选</span></h2>
-    <p class="hint">开会时点「开始录音」，随手记要点；也可点「语音识别」边说边出文字，一句话说完自动落一段，点「送入质检并运行」直接进下面的「会议转录」跑一遍。<b>识别只出文字、不区分说话人</b>——换人时点一下名字，之后的话就记到他名下；<b>换人前还没到停顿的半句会先按原来的说话人落下</b>，不会记到新人名下（浏览器端没有声纹分离，全自动区分要靠会议平台转写）。识别可以和录音同时开（两路共用一支麦克风，个别设备会抢不到，报 <span class="mono">audio-capture</span> 时只留一种）；<b>不录音也有会话时间码</b>，每行照顺序递增。默认只走端上识别，音频不出本机；只有把「识别方式」改成云端，音频才会发给浏览器厂商。</p>
+    <p class="hint">开会时点「开始录音」，随手记要点；也可点「语音识别」边说边出文字，一句话说完自动落一段，点「送入质检并运行」直接进下面的「会议转录」跑一遍。<b>识别只出文字、不区分说话人</b>——换人时点一下名字，之后的话就记到他名下；<b>换人前还没到停顿的半句会先按原来的说话人落下</b>，不会记到新人名下（浏览器端没有声纹分离，全自动区分要靠会议平台转写）。识别可以和录音同时开（两路共用一支麦克风，个别设备会抢不到，报 <span class="mono">audio-capture</span> 时只留一种）；<b>不录音也有会话时间码</b>，每行照顺序递增。优先走端上识别（音频不出本机）；但<b>内置浏览器 / Electron 壳实测会让整页崩</b>，这种环境本页自动改走浏览器默认方式（音频会发给浏览器厂商）并在状态行说明，要端上请用 Chrome / Edge 打开。<b>记录有自动草稿</b>：整页崩了或误关，重开本页会自动找回最近一次没保存的内容。</p>
     <div class="rec-grid">
       <div>
         <label class="rec-fld" for="rec-title"><span>会议名</span></label>
@@ -1493,12 +1493,47 @@ var RECORDER = (function () {
       el.line.focus();
     }
 
+    // 整页崩塌（内置浏览器上端点识别会崩，已实测）或误关时，唯一能救回内容的是草稿：
+    // 每落一行就往 localStorage 存一份，重开页面自动找回。写不进去也不打断记录。
+    var DRAFT_KEY = "mtr_draft_v2";
+    var draftTimer = null, draftOff = false;
+
+    function saveDraft() {
+      if (draftOff) return;
+      if (draftTimer) return;
+      draftTimer = setTimeout(function () {
+        draftTimer = null;
+        try {
+          if (!state.turns.length) { localStorage.removeItem(DRAFT_KEY); return; }
+          localStorage.setItem(DRAFT_KEY, JSON.stringify({
+            at: Date.now(), title: title(), createdAt: state.createdAt,
+            duration: currentAt() || 0, turns: state.turns
+          }));
+        } catch (e) { draftOff = true; }   // 隐私模式或配额满：草稿失效，但记录照常
+      }, 600);
+    }
+
+    function readDraft() {
+      try {
+        var raw = localStorage.getItem(DRAFT_KEY);
+        if (!raw) return null;
+        var d = JSON.parse(raw);
+        if (!d || !d.turns || !d.turns.length) return null;
+        return d;
+      } catch (e) { return null; }
+    }
+
+    function dropDraft() {
+      try { localStorage.removeItem(DRAFT_KEY); } catch (e) {}
+    }
+
     // 页面与浮窗共用同一条写入路径：浮窗里记的一条，和页面里记的完全等价
     function submitText(text, who) {
       var t = oneLine(text || "");
       if (!t) return false;
       var at = currentAt();
       append({ at: at == null ? state.duration : at, speaker: who, text: t });
+      saveDraft();
       setStatus("记下 1 条（共 " + state.turns.filter(function (x) { return !x.mark; }).length + " 条）");
       return true;
     }
@@ -1506,6 +1541,7 @@ var RECORDER = (function () {
     function markNow(note) {
       var at = currentAt();
       append({ at: at == null ? state.duration : at, mark: note || "打点" });
+      saveDraft();
       setStatus("已打点" + (note ? "：" + note : ""));
     }
 
@@ -1755,6 +1791,13 @@ var RECORDER = (function () {
           }
         },
         onError: function (msg) { asrSay(msg); },
+        // 内置浏览器（Electron 壳）实测碰端上识别会整页崩：这类环境不进端上，
+        // 直接按浏览器默认（云端）走，并把「音频会外发」这句说清楚，不偷偷改口径。
+        onLocalBlocked: function (risk) {
+          asrSay("当前浏览器（" + (risk === "electron" ? "Electron 内核" : "内置浏览器") +
+            "）在端上识别上会让整页崩（已实测），已改用浏览器默认方式——音频会发给浏览器厂商；" +
+            "要音频不出本机，请用 Chrome / Edge 打开本页");
+        },
         onState: function (s) {
           asrOn = (s === "listening-local" || s === "listening-remote");
           asrLabel(asrOn);
@@ -1772,25 +1815,18 @@ var RECORDER = (function () {
       return { used: true, mode: asrMode(), lang: asrLang(), engine: typeof ASR !== "undefined" ? "Web Speech API " + ASR.VERSION : "Web Speech API" };
     }
 
-    // 端上语言包必须在用户手势里安装：这次点击本身就是手势，顺着点完就装
+    // 端上语言包要不要装，只能由用户显式点一次（install 需要用户手势）；
+    // 自动流程里不再先探「语言包可不可下载」——那个探测在部分浏览器会崩渲染进程。
     function startAsr(a) {
       a.setLang(asrLang());
       a.setLocal(asrMode() !== "remote");
       a.open().then(function (r) {
         if (r === "running") return;
-        if (r === "need-install") {
-          asrSay("端上语言包还没下载，正在安装（一次性联网下载，之后可离线识别）…");
-          a.installLocal().then(function (ok) {
-            if (ok) { asrSay("语言包装好了，开始识别…"); return a.start(); }
-            asrSay("语言包没装上：可把「识别方式」改为云端识别，或直接用平台转写。");
-          });
-          return;
-        }
         if (r === "need-choice") {
-          asrSay("这个浏览器没有端上识别（Chrome 139+ / Firefox 160+ 才有）。把「识别方式」改成云端识别（音频会发给浏览器厂商），或直接用平台转写。");
+          asrSay("这个浏览器说识别服务不可用（多半是网络或服务区域限制）。可先用「记一条」手敲，或直接用会议平台转写导出后贴回来。");
           return;
         }
-        asrSay("识别没能启动：" + r + "；文字录入不受影响。");
+        asrSay("识别没能启动：" + r + "；文字录入不受影响。识别包缺失会在这行提示，按提示改云端或换 Chrome。");
       });
     }
 
@@ -1973,6 +2009,7 @@ var RECORDER = (function () {
       sessionAt = 0;
       asrUsed = false;
       prevSpeaker = "";
+      dropDraft();          // 主动清空就不该再被「找回草稿」弹回来
       if (el.title) el.title.value = "";
       if (el.time) el.time.textContent = "00:00";
       if (el.line) el.line.value = "";
@@ -2029,6 +2066,22 @@ var RECORDER = (function () {
 
     // 首次进来：给一个占位会议名，并把存档列表拉出来
     if (el.title && !el.title.value) el.title.placeholder = defaultTitle();
+
+    // 上次没落档就崩了/被关了：把草稿捡回来，别让一场会白丢。
+    // 只在当前是空记录时恢复，避免把刚开的会盖掉。
+    (function restoreDraft() {
+      var d = readDraft();
+      if (!d || !d.turns || !d.turns.length) return;
+      state.createdAt = d.createdAt || Date.now();
+      state.turns = d.turns.slice();
+      if (d.title && el.title) el.title.value = d.title;
+      writePreview(buildScript(state.turns), true);
+      refreshSpeakers();
+      dirty = true;
+      var n = state.turns.filter(function (t) { return !t.mark; }).length;
+      setStatus("已自动找回上次没保存的记录（" + n + " 条）——整页崩了或误关都还在，点「保存原稿」落档");
+    })();
+
     refreshList();
     paintLevel(0);
 
@@ -2481,12 +2534,19 @@ var MEDIA = (function () {
  *
  * 隐私：Web Speech 默认把音频发给浏览器厂商的识别服务（Chrome → Google）。
  * Chrome 139+ / Firefox 160+ 支持 `processLocally = true` 的端上识别，音频不出本机。
- * 本模块默认**只走端上**；端上不可用时把选择权交给用户，不偷偷联网。
+ *
+ * 端上识别的实测边界（2026-11-26 内置浏览器实测，写在代码里免得下次又踩）：
+ *   - 内置浏览器（Electron 43 / Chromium 150）里，`available({langs, processLocally:true})`
+ *     与 `start()` 且 `processLocally=true` 都会让**渲染进程崩溃**（页面直接变 about:blank）；
+ *     同一环境下 `available({langs})`（不带 processLocally）正常返回 "available"。
+ *   - 也就是说「先探测端上、再用端上」这条路在这些环境里探测本身就是崩溃点，try/catch 拦不住。
+ *     所以本模块不再调用带 processLocally 的 available()：认出这类环境就整段绕开端上，
+ *     其余环境直接 start()（失败由 onerror 的 language-not-supported 兜底提示）。
  */
 var ASR = (function () {
   "use strict";
 
-  var VERSION = "1.1";
+  var VERSION = "1.2";
   var DEFAULT_LANG = "zh-CN";
   var LANGS = [
     { code: "zh-CN", label: "中文普通话" },
@@ -2500,12 +2560,22 @@ var ASR = (function () {
     return w.SpeechRecognition || w.webkitSpeechRecognition || null;
   }
 
-  // 端上识别是否可用：'available' | 'downloadable' | 'unavailable' | 'unknown'
-  function localStatus(win, lang) {
+  // 哪些环境碰端上识别会崩：内置浏览器（Electron/桌面客户端壳）已实测必崩。
+  // 返回 "" 表示没有已知风险，可用端上。
+  function riskyLocal(win) {
+    var w = win || (typeof window !== "undefined" ? window : null);
+    var ua = (w && w.navigator && w.navigator.userAgent) || "";
+    if (/Electron/i.test(ua)) return "electron";
+    if (/DuMate|qianfan-desk|qianfan_desk/i.test(ua)) return "embedded";
+    return "";
+  }
+
+  // 语言是否可识别（安全探测：**不带** processLocally，那个参数会崩渲染进程）
+  function serviceStatus(win, lang) {
     var C = ctor(win);
     if (!C || typeof C.available !== "function") return Promise.resolve("unknown");
     try {
-      var r = C.available({ langs: [lang || DEFAULT_LANG], processLocally: true });
+      var r = C.available({ langs: [lang || DEFAULT_LANG] });
       if (r && typeof r.then === "function") {
         return r.then(function (s) { return String(s || "unknown"); }, function () { return "unknown"; });
       }
@@ -2515,7 +2585,11 @@ var ASR = (function () {
     }
   }
 
-  // 安装端上语言包：必须在用户手势里调用，否则浏览器会拒
+  // 兼容旧调用名：不带 processLocally 的安全探测
+  function localStatus(win, lang) { return serviceStatus(win, lang); }
+
+  // 安装端上语言包：必须在用户手势里调用，否则浏览器会拒。
+  // 注意：要不要装、能不能装，只能由用户显式点一次，不在自动流程里调。
   function installLocal(win, lang) {
     var C = ctor(win);
     if (!C || typeof C.install !== "function") return Promise.resolve(false);
@@ -2536,7 +2610,7 @@ var ASR = (function () {
       "network": "识别服务连不上：端上识别不需要网络，云端识别需要",
       "no-speech": "这段没听到说话",
       "aborted": "识别被中止",
-      "language-not-supported": "这个语言没有端上语言包：可先安装，或改用云端识别",
+      "language-not-supported": "这个语言没有可用的识别包：换成中文普通话、改云端识别，或直接用平台转写",
       "phrases-not-supported": "浏览器不支持自定义短语"
     };
     return map[code] || ("识别出错：" + (code || "未知"));
@@ -2609,22 +2683,25 @@ var ASR = (function () {
 
     function supported() { return !!C; }
 
-    // 端上不可用时由调用方决定：opts.onNeedChoice
+    // 打开：先认环境，再决定能不能碰端上。
+    // 关键：这里**不调用** available({processLocally:true})——它在部分内嵌浏览器里直接崩渲染进程。
     function open() {
       if (!C) return Promise.resolve("unsupported");
+      var risk = riskyLocal(win);
+      if (risk) {
+        // 这类环境连探测都会崩：直接按浏览器默认（云端）走，并把原因交回页面
+        local = false;
+        hooks("onLocalBlocked", risk);
+        return Promise.resolve(start());
+      }
       if (!local) return Promise.resolve(start());
-      return localStatus(win, lang).then(function (st) {
-        if (st === "available") return start();
-        if (st === "downloadable") {
-          if (typeof opts.onNeedInstall === "function") opts.onNeedInstall(lang);
-          return "need-install";
+      return serviceStatus(win, lang).then(function (st) {
+        if (st === "unavailable") {
+          local = false;
+          hooks("onNeedChoice", lang);
+          return "need-choice";
         }
-        if (st === "unknown") {
-          // 老浏览器没有 available()：仍尝试 processLocally，失败再报错
-          return start();
-        }
-        if (typeof opts.onNeedChoice === "function") opts.onNeedChoice(lang);
-        return "need-choice";
+        return start();      // 端上用「直接开」，失败由 onerror 兜底，不做会崩的预检
       });
     }
 
@@ -2661,6 +2738,10 @@ var ASR = (function () {
         var code = (e && e.error) || "unknown";
         // no-speech 是常态，不当错误刷屏
         if (code !== "no-speech") hooks("onError", errorText(code));
+        if (code === "language-not-supported" && local) {
+          // 端上模型缺失就是这条：直接告诉用户换云端，不让他反复点
+          hooks("onError", "这个浏览器没有「" + lang + "」的端上识别包：改用云端识别（音频会发给浏览器厂商），或直接用平台转写");
+        }
         if (code === "not-allowed" || code === "service-not-allowed") {
           stoppedByUser = true;
           running = false;
@@ -2743,7 +2824,7 @@ var ASR = (function () {
       setLocal: setLocal,
       isRunning: isRunning,
       current: current,
-      localStatus: function () { return localStatus(win, lang); },
+      localStatus: function () { return serviceStatus(win, lang); },
       installLocal: function () { return installLocal(win, lang); }
     };
   }
@@ -2753,6 +2834,8 @@ var ASR = (function () {
     DEFAULT_LANG: DEFAULT_LANG,
     LANGS: LANGS,
     ctor: ctor,
+    riskyLocal: riskyLocal,
+    serviceStatus: serviceStatus,
     localStatus: localStatus,
     installLocal: installLocal,
     errorText: errorText,
