@@ -277,6 +277,50 @@
     pre.cmd{background:#f6f7f9;color:#14181f;border-color:var(--line)}
     section{padding:18px 0;page-break-inside:avoid}
   }
+
+  /* ===== 与工作台 v2 同步的视觉语言（只改表现，不动功能与适配约束） ===== */
+  :root{
+    --bg:#f5f7fa; --line-soft:#eef1f6; --accent-ink:#0e3c66;
+    --radius-sm:8px;
+    --shadow-1:0 1px 2px rgba(16,24,40,.04),0 2px 6px rgba(16,24,40,.05);
+    --shadow-2:0 2px 8px rgba(16,24,40,.07),0 14px 30px rgba(16,24,40,.10);
+    --ring:0 0 0 3px rgba(20,84,140,.18);
+  }
+  body{color:#0f141b;line-height:1.7}
+  section{border-bottom-color:var(--line-soft)}
+  .sec-sub{max-width:76ch;line-height:1.8}
+  /* 指标卡：数字放大，语义色只落在左侧 3px 竖条上（与工作台 KPI 同构） */
+  .metric{position:relative;overflow:hidden;border-color:var(--line-soft)}
+  .metric::before{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--line-strong)}
+  .metric .v{font-size:30px;letter-spacing:-.6px}
+  .metric .k{font-size:12.2px}
+  .metric:hover{border-color:var(--line-strong);box-shadow:var(--shadow-2)}
+  /* 面板与表格：表头加深、行距放宽，和工作台用同一套读数节奏 */
+  .panel{border-color:var(--line-soft);box-shadow:var(--shadow-1)}
+  .panel-head{background:#f4f7fb;border-bottom-color:var(--line-soft)}
+  thead th{background:#eef2f8;font-size:12.5px;color:#4a5462;letter-spacing:.02em}
+  tbody td{padding:10px 14px;border-bottom-color:var(--line-soft);line-height:1.68}
+  tbody tr:nth-child(even){background:#fbfcfe}
+  tbody tr.row:hover,tbody tr.row.open{background:#f2f7fd}
+  .detail td{background:#f8fbfe}
+  .tag{font-size:11.5px;background:#f6f9fd;border-color:var(--line-soft);color:#4a5462}
+  .tag.rev{background:var(--accent-soft);border-color:var(--accent-line);color:var(--accent-ink)}
+  /* 卡片类：同圆角、同两级阴影 */
+  .step,.issue{border-color:var(--line-soft);box-shadow:var(--shadow-1)}
+  .step:hover,.issue:hover{box-shadow:var(--shadow-2);border-color:var(--line-strong)}
+  .disclaimer,.grp-note,.open-strip,.qbox,pre.cmd{border-radius:var(--radius-sm)}
+  .open-strip{border-color:var(--line-soft);box-shadow:var(--shadow-1)}
+  .open-strip b{color:var(--accent-ink)}
+  .btn{transition:border-color .15s,color .15s,background .15s,box-shadow .15s}
+  .btn:focus-visible{box-shadow:var(--ring)}
+  footer{border-top-color:var(--line-soft)}
+  @media (max-width:640px){.metric .v{font-size:24px}}
+  @media print{
+    .step,.issue,.panel,.metric,.groups,.open-strip,.grp-note{box-shadow:none}
+    .panel{overflow:visible}
+    .panel table{min-width:0}
+    tr{page-break-inside:avoid}
+  }
 </style>
 </head>
 <body>
