@@ -1,4 +1,6 @@
-// A 通道（按人切片查遗漏）—— qc_tools.py v1.4 slice_scan 的等价 JS 实现
+// A 通道（按人切片查遗漏）—— qc_tools.py v1.7 slice_scan 的等价 JS 实现
+//     v1.5 / v1.6：补录音转写稿的形态识别与去噪归一化（detectAsr / asrNormalize）、材料自动分拣（classifyMaterial），
+//     与 Python 侧 check_quotes 两边同口径去噪；头部原先只写到 v1.4，能力已超出，这里对齐。
 // 用途：供演示页内联使用（浏览器），也可被 node 直接加载做对拍验证。
 // 原则：只输出“候选”，不下“遗漏”结论；机构主体单列清单，不进候选表、不计精确率。
 // v1.3 与 Python 同步：规则①程序性动词句、②名单句、③机构主体、④参会对象剥离；
