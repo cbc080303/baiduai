@@ -1,13 +1,19 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""双人标注一致率对照 v1.0
+"""双人标注一致率对照 v1.1
 
-输入两份独立标注的 CSV（列：编号,任务,负责人,截止时间,约束,原文依据,标注人），
-输出条目级一致率、字段一致率与分歧清单。
+输入两份独立标注的 CSV，输出条目级一致率、字段一致率与分歧清单。
+
+两种模式：
+  全量（默认）：列 编号,任务,负责人,截止时间,约束,原文依据,标注人
+      两人各自从转录里摘条目、各自编号，所以按任务文本配对。
+  小样本（--small）：列 编号,语料组,原文依据,任务,负责人,截止时间,算不算待办,备注,标注人
+      条目由脚本预填、编号统一，按编号配对；先比"算不算待办"，再比字段。
 
 用法：
   python agreement.py 双人标注_标注员A.csv 双人标注_标注员B.csv
   python agreement.py A.csv B.csv --out 一致率对照表.md
+  python agreement.py 双人标注_小样本_标注员A.csv 双人标注_小样本_标注员B.csv --small
 
 判定口径（与《会议待办判定手册 v1.0》配套）：
   条目一致率 ≥ 0.80 且 字段一致率 ≥ 0.80  → 口径可用，可进全量
@@ -106,6 +112,130 @@ def sanity(rows, tag):
     return bad
 
 
+def load_small(path):
+    """小样本表按「编号」预填且唯一，直接以编号为键。"""
+    with open(path, encoding="utf-8-sig") as f:
+        rows = [r for r in csv.DictReader(f) if (r.get("编号") or "").strip()]
+    return {r["编号"].strip(): r for r in rows}
+
+
+def verdict_of(row):
+    """小样本专用判断：True=算待办，False=不算，None=没填。
+
+    优先级：先看「算不算待办」列，再看任务列是否写了字。
+    填了 N 却仍写了任务，按 N 算（以显式判断为准）。
+    """
+    v = (row.get("算不算待办") or "").strip().upper()
+    task = (row.get("任务") or "").strip()
+    if v.startswith("N"):
+        return False
+    if v.startswith("Y"):
+        return True if task else None
+    if task:
+        return True
+    return None
+
+
+def small_main(path_a, path_b, out_path):
+    """小样本模式：按编号配对，先比「算不算」，再比字段。"""
+    a, b = load_small(path_a), load_small(path_b)
+    ids = sorted(set(a) | set(b), key=lambda s: (s.split("-")[0], int(s.split("-")[-1])
+                                                  if s.split("-")[-1].isdigit() else 0))
+    n = len(ids)
+    both_y, both_n, mixed, unfilled = [], [], [], []
+    for i in ids:
+        va, vb = verdict_of(a.get(i, {})), verdict_of(b.get(i, {}))
+        if va is None or vb is None:
+            unfilled.append(i)
+        elif va and vb:
+            both_y.append(i)
+        elif not va and not vb:
+            both_n.append(i)
+        else:
+            mixed.append((i, va, vb))
+
+    filled = n - len(unfilled)
+    item_agree = (len(both_y) + len(both_n)) / n if n else 0.0
+    owner_same = sum(1 for i in both_y
+                     if norm_names(a[i].get("负责人")) == norm_names(b[i].get("负责人")))
+    due_same = sum(1 for i in both_y
+                   if norm_due(a[i].get("截止时间")) == norm_due(b[i].get("截止时间")))
+    quote_same = sum(1 for i in both_y
+                     if (a[i].get("原文依据") or "").strip("“”\" ") ==
+                        (b[i].get("原文依据") or "").strip("“”\" "))
+    m = len(both_y)
+    field_agree = (owner_same + due_same) / (2 * m) if m else 0.0
+
+    if not filled:
+        verdict = "尚未填写：两人都还没填，先按《20 分钟标注卡》各填一遍"
+    elif item_agree >= 0.8 and field_agree >= 0.8:
+        verdict = "口径可用（小样本方向性通过），可进全量标注"
+    elif item_agree >= 0.6:
+        verdict = "回来补手册条款，重标分歧段"
+    else:
+        verdict = "停：手册不清晰，先改条款再标"
+
+    L = []
+    L.append(f"## 小样本一致率｜{path_a} × {path_b}\n")
+    L.append("> 关口：这是 12 条预填样本的方向性结果，**不是统计估计**；"
+             "条目一致率按「两人对同一条是否算待办 + 字段是否写一致」计算，误差范围很宽。\n")
+    L.append("### 一、汇总")
+    L.append("| 指标 | 值 |")
+    L.append("|---|---|")
+    L.append(f"| 样本条数 | {n} |")
+    L.append(f"| 已填条数 | {filled} |")
+    L.append(f"| 两人都判「算」 | {len(both_y)} |")
+    L.append(f"| 两人都判「不算」 | {len(both_n)} |")
+    L.append(f"| 一人算一人不算 | {len(mixed)} |")
+    L.append(f"| 未填 | {len(unfilled)} |")
+    L.append(f"| 条目一致率 | {item_agree:.1%} |")
+    L.append(f"| 负责人一致率 | {(owner_same / m if m else 0):.1%} |")
+    L.append(f"| 截止时间一致率 | {(due_same / m if m else 0):.1%} |")
+    L.append(f"| 原文依据一致率 | {(quote_same / m if m else 0):.1%} |")
+    L.append(f"| 字段综合一致率 | {field_agree:.1%} |")
+    L.append(f"| 判定 | {verdict} |")
+
+    L.append("\n### 二、「算不算待办」分歧")
+    L.append("| 编号 | A | B | 原文依据 |")
+    L.append("|---|---|---|---|")
+    for i, va, vb in mixed:
+        L.append(f"| {i} | {'算' if va else '不算'} | {'算' if vb else '不算'} "
+                 f"| {(a.get(i) or b.get(i)).get('原文依据', '')} |")
+    if not mixed:
+        L.append("| 未发现 | — | — | — |")
+
+    L.append("\n### 三、字段分歧（仅两人都判「算」的条目）")
+    L.append("| 编号 | 字段 | A | B |")
+    L.append("|---|---|---|---|")
+    diff = 0
+    for i in both_y:
+        if norm_names(a[i].get("负责人")) != norm_names(b[i].get("负责人")):
+            diff += 1
+            L.append(f"| {i} | 负责人 | {a[i].get('负责人', '')} | {b[i].get('负责人', '')} |")
+        if norm_due(a[i].get("截止时间")) != norm_due(b[i].get("截止时间")):
+            diff += 1
+            L.append(f"| {i} | 截止时间 | {a[i].get('截止时间', '')} | {b[i].get('截止时间', '')} |")
+        if (a[i].get("原文依据") or "").strip("“”\" ") != (b[i].get("原文依据") or "").strip("“”\" "):
+            diff += 1
+            L.append(f"| {i} | 原文依据 | 被改动 | 被改动 |")
+    if not diff:
+        L.append("| 未发现 | — | — | — |")
+
+    if unfilled:
+        L.append("\n### 四、还没填的条目")
+        L.append("| 编号 |")
+        L.append("|---|")
+        for i in unfilled:
+            L.append(f"| {i} |")
+
+    text = "\n".join(L)
+    print(text)
+    if out_path:
+        with open(out_path, "w", encoding="utf-8") as f:
+            f.write(text + "\n")
+        print(f"\n已写入 {out_path}")
+
+
 def main():
     args = [a for a in sys.argv[1:] if not a.startswith("--")]
     if len(args) < 2:
@@ -115,7 +245,15 @@ def main():
     if "--out" in sys.argv:
         out_path = sys.argv[sys.argv.index("--out") + 1]
 
+    if "--small" in sys.argv:
+        small_main(args[0], args[1], out_path)
+        return
+
     rows_a, rows_b = load(args[0]), load(args[1])
+    if not rows_a and not rows_b:
+        print("两份表都没有条目。全量模式按「任务」列非空才算一条；")
+        print("如果用的是 12 条预填表，请加 --small（它按「算不算待办」判断，允许任务留空）。")
+        return
     sanity(rows_a, args[0])
     sanity(rows_b, args[1])
     pairs, only_a, only_b = match(rows_a, rows_b)
