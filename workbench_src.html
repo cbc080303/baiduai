@@ -237,16 +237,25 @@ const QC = (function(){
   }
 
   // 三态：命中 / 不匹配 / 不可检
+  // v1.3：录音识别稿先去掉时间码/说话人前缀/识别占位与标点，避免把格式差异判成不可追溯
   function checkQuotes(rows, raw, opts){
     opts = opts || {};
-    const body = opts.normalize === false ? String(raw || "") : squeeze(raw);
+    const asr = (typeof A_CHANNEL !== "undefined" && A_CHANNEL.detectAsr)
+      ? A_CHANNEL.detectAsr(raw) : {is_asr: false};
+    const asrNorm = opts.normalize !== false && asr.is_asr;
+    const base = asrNorm && A_CHANNEL.asrNormalize ? A_CHANNEL.asrNormalize(raw) : String(raw || "");
+    const body = opts.normalize === false ? String(raw || "") : squeeze(base);
+    const stripAsr = s => asrNorm
+      ? s.replace(/[。！？；，、：,.!?;:]/g, "")
+          .replace(/[\[\(（【]\s*(听不清|听不见|无法识别|噪声|噪音|音乐|笑声|掌声|沉默|静音|重叠)\s*[\]\)）】]/g, "")
+      : s;
     return rows.map(r => {
       const quote = String(r["原文依据"] || "").trim();
       const parts = quote.split(/[｜＋+]/).map(p => p.trim()).filter(Boolean);
-      if (!parts.length) return {编号: r["编号"], quote: quote, hit: false, checkable: false};
+      if (!parts.length) return {编号: r["编号"], quote: quote, hit: false, checkable: false, asr: asrNorm};
       const norm = s => opts.normalize === false ? String(s) : squeeze(s);
-      const ok = parts.every(p => body.includes(norm(p.replace(/^[“”"]+|[“”"]+$/g, ""))));
-      return {编号: r["编号"], quote: quote, hit: ok, checkable: true};
+      const ok = parts.every(p => body.includes(norm(stripAsr(p.replace(/^[“”"]+|[“”"]+$/g, "")))));
+      return {编号: r["编号"], quote: quote, hit: ok, checkable: true, asr: asrNorm};
     });
   }
 
@@ -258,6 +267,17 @@ const QC = (function(){
     if (raw.trim() && !hasNames) issues.push({level: "warn", text: "没读到「参会人：」行。", fix: "按人切片查遗漏需要这份名单；缺了 A 通道不可用，D 与 C 仍可跑。"});
     if (raw.trim() && hasNames && speakerLines === 0) issues.push({level: "block", text: "读到了参会人，但一句「姓名：内容」都没切出来。", fix: "检查每行是不是「姓名：」开头，姓名要与名单一致（甲/乙/丙/丁也支持）。"});
     if (raw.trim() && !hasNames && speakerLines === 0 && raw.length > 60) issues.push({level: "block", text: "这段文字看着像会议纪要正文，不像逐字转写稿。", fix: "纪要正文是概括过的，依据回查会全不匹配——不要用它跑 D。"});
+    const asrInfo = (typeof A_CHANNEL !== "undefined" && A_CHANNEL.detectAsr) ? A_CHANNEL.detectAsr(raw) : null;
+    if (asrInfo && asrInfo.is_asr){
+      const formCn = {"timestamp+speaker": "时间码+说话人", "speaker": "仅说话人标记",
+                      "timestamp": "仅时间码", "plain": "纯文本"}[asrInfo.form] || asrInfo.form;
+      const verdictCn = {"usable": "可检", "degraded": "降级可检", "unusable": "不可检"}[asrInfo.verdict] || asrInfo.verdict;
+      issues.push({level: "info",
+        text: "识别为录音转写稿（" + formCn + "，" + asrInfo.lines + " 行：时间码 " + asrInfo.ts_lines +
+              " 行、说话人 " + asrInfo.speaker_lines + " 行、识别占位 " + asrInfo.placeholder + " 处）。",
+        fix: "比对前去掉时间码、说话人前缀、识别占位与标点；结论「" + verdictCn + "」。" +
+             (asrInfo.notes.length ? asrInfo.notes.join("；") : "")});
+    }
     if (!rows.length) issues.push({level: "block", text: "待办表没读出任务行。", fix: "表头要有「任务」列；六列顺序不限。"});
     const withQuote = rows.filter(r => String(r["原文依据"] || "").trim()).length;
     if (rows.length && !withQuote) issues.push({level: "block", text: "待办表没有「原文依据」，或这一列全为空。", fix: "补上依据列，否则 D 只能标「不可检」；也可点「载入样例」看标准格式。"});
@@ -265,7 +285,7 @@ const QC = (function(){
     const noDueCol = rows.length && rows.every(r => !String(r["截止时间"] || "").trim());
     if (noOwnerCol) issues.push({level: "warn", text: "「负责人」列全空。", fix: "C 与分档会把这些全判为待人工判断，不是数据结论。"});
     if (noDueCol) issues.push({level: "warn", text: "「截止时间」列全空。", fix: "同上：先确认是不是列名为「时限/截止」被漏识别。"});
-    return {issues: issues, hasNames: hasNames, withQuote: withQuote};
+    return {issues: issues, hasNames: hasNames, withQuote: withQuote, asr: asrInfo};
   }
 
   function parseOwners(cell, names){
@@ -381,11 +401,20 @@ const QC = (function(){
     let L = [];
     const bad = hitBad(ctx);
     L.push("# 会议待办质检报告\n\n");
-    L.push("输入：参会人 " + (ctx.names || []).length + " 人｜待办 " + ctx.rows.length + " 条\n\n");
+    const asrR = ctx.preflight && ctx.preflight.asr;
+    L.push("输入：参会人 " + (ctx.names || []).length + " 人｜待办 " + ctx.rows.length + " 条" +
+           (asrR && asrR.is_asr ? "｜**录音转写稿**（" + ({"timestamp+speaker": "时间码+说话人", "speaker": "仅说话人标记", "timestamp": "仅时间码", "plain": "纯文本"}[asrR.form] || asrR.form) + "）" : "") + "\n\n");
     L.push("## 一、结论\n\n");
     const iss = ctx.preflight.issues || [];
     L.push("- 输入体检：" + (iss.length ? "**" + iss.length + " 项提示**（见下）" : "通过") + "\n");
-    iss.forEach(x => L.push("  - [" + (x.level === "block" ? "阻断" : "提示") + "] " + x.text + " " + x.fix + "\n"));
+    const tagOf = lv => ({"block": "阻断", "info": "信息"}[lv] || "提示");
+    iss.forEach(x => L.push("  - [" + tagOf(x.level) + "] " + x.text + " " + x.fix + "\n"));
+    if (asrR && asrR.is_asr){
+      L.push("- 转写形态：**" + ({"timestamp+speaker": "时间码+说话人", "speaker": "仅说话人标记", "timestamp": "仅时间码", "plain": "纯文本"}[asrR.form] || asrR.form) +
+             "**｜时间码 " + Math.round(asrR.ts_ratio * 100) + "%｜说话人 " + Math.round(asrR.speaker_ratio * 100) +
+             "%｜无标点长句 " + asrR.punctless_long + " 行｜识别占位 " + asrR.placeholder + " 处｜结论：**" +
+             ({"usable": "可检", "degraded": "降级可检", "unusable": "不可检"}[asrR.verdict] || asrR.verdict) + "**\n");
+    }
     L.push("- 依据回查：**" + ctx.hit + "/" + ctx.checkable + " 命中**" +
            (ctx.uncheckable ? "（另 " + ctx.uncheckable + " 条不可检，不计入分母）" : "") +
            (bad.length ? "，不匹配 " + bad.length + " 条：" + bad.map(h => "#" + h["编号"]).join("、") : "") + "\n");
@@ -491,7 +520,7 @@ function render(ctx){
   const iss = (ctx.preflight && ctx.preflight.issues) || [];
   if (iss.length){
     h += '<div class="preflight"><h3>输入体检：' + iss.length + " 项" + '</h3><ul>';
-    iss.forEach(x => { h += '<li><b>' + (x.level === "block" ? "阻断" : "提示") + '</b> ' + esc(x.text) + ' <span class="fix">' + esc(x.fix) + '</span></li>'; });
+    iss.forEach(x => { h += '<li><b>' + ({"block": "阻断", "info": "信息"}[x.level] || "提示") + '</b> ' + esc(x.text) + ' <span class="fix">' + esc(x.fix) + '</span></li>'; });
     h += "</ul></div>";
   }
 

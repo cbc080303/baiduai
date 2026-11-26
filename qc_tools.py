@@ -108,15 +108,172 @@ def strip_recipients(text):
     return t
 
 
+# ---------------------------------------------------------------- 录音转写稿（ASR）适配
+
+
+# 行首时间码：00:01:23 / 01:23 / [00:01:23.450] / (00:01:23)
+TS_RE = re.compile(r"^\s*[\[\(【]?(\d{1,3}:\d{2}(?::\d{2})?(?:[.,]\d{1,3})?)[\]\)】]?\s*")
+# ASR 非语言占位：听不清、噪音、笑声…… 中英双语
+PLACEHOLDER_RE = re.compile(
+    r"[\[\(（【]\s*(听不清|听不见|无法识别|噪声|噪音|音乐|笑声|掌声|沉默|静音|重叠|"
+    r"unintelligible|inaudible|noise|music|laughter|silence|overlap)\s*[\]\)）】]", re.I)
+# 自动编号说话人：说话人1 / Speaker 2 —— 不是真名，不能拿来按人切片
+SPEAKER_NUM_RE = re.compile(r"^(说话人|发言人|嘉宾|speaker|spk)[\s_]*\d{1,2}$", re.I)
+PUNCT_RE = re.compile(r"[。！？；]")
+ASR_ENUM_HEADS = ("说话人", "发言人", "嘉宾")
+
+
+def detect_asr(raw):
+    """判断这段文字是不是录音识别（ASR）产出的转写稿，并给出可机械核对的指标。
+
+    只做形态判断，不评价识别准确率——没有参考文本，“错字率”不可测。能测的是
+    “这段稿子还能不能被质检”：有没有说话人、有没有时间码、有没有把一句压成
+    几百字、有没有 [听不清] 这类占位。
+    """
+    lines = [l.strip() for l in (raw or "").splitlines() if l.strip()]
+    total = len(lines)
+    if not total:
+        return {"form": "empty", "is_asr": False, "lines": 0, "ts_lines": 0,
+                "speaker_lines": 0, "placeholder": 0, "punctless_long": 0,
+                "ts_ratio": 0.0, "speaker_ratio": 0.0, "punctless_ratio": 0.0,
+                "verdict": "unusable", "notes": ["输入为空。"]}
+
+    ts_lines = speaker_lines = punctless = 0
+    for line in lines:
+        m_ts = TS_RE.match(line)
+        if m_ts:
+            ts_lines += 1
+            line = line[m_ts.end():]
+        head = re.match(r"^([^\s：:，。；]{1,12})[：:](.*)$", line)
+        if head:
+            speaker_lines += 1
+            line = head.group(2)
+        body = line.strip()
+        if len(body) >= 30 and not PUNCT_RE.search(body) and not re.search(r"[，、]", body):
+            punctless += 1
+
+    ph = len(PLACEHOLDER_RE.findall(raw or ""))
+    ts_ratio = ts_lines / total
+    sp_ratio = speaker_lines / total
+    pl_ratio = punctless / total
+
+    is_asr = bool(ts_lines or ph or pl_ratio >= 0.3)
+    if ts_lines and speaker_lines:
+        form = "timestamp+speaker"
+    elif speaker_lines:
+        form = "speaker"
+    elif ts_lines:
+        form = "timestamp"
+    else:
+        form = "plain"
+
+    notes = []
+    if is_asr and not speaker_lines:
+        notes.append("没有说话人标记：按人切片的遗漏检查无法执行，只能跑依据回查与字段核查。")
+    if is_asr and pl_ratio >= 0.3:
+        notes.append("有 %d 行是无标点长句：按标点切句会失效，需按时间码或长度切。" % punctless)
+    if ph:
+        notes.append("含 %d 处识别占位（“听不清”“笑声”等）：这些位置不能当依据原句。" % ph)
+    if not is_asr and not speaker_lines:
+        notes.append("无时间码、无说话人标记、句子带标点：按人工整理稿处理。")
+
+    if is_asr and sp_ratio >= 0.8:
+        verdict = "usable"
+    elif is_asr and sp_ratio > 0:
+        verdict = "degraded"
+    elif is_asr:
+        verdict = "unusable"
+    else:
+        verdict = "usable"
+    return {"form": form, "is_asr": is_asr, "lines": total, "ts_lines": ts_lines,
+            "speaker_lines": speaker_lines, "placeholder": ph, "punctless_long": punctless,
+            "ts_ratio": round(ts_ratio, 3), "speaker_ratio": round(sp_ratio, 3),
+            "punctless_ratio": round(pl_ratio, 3), "verdict": verdict, "notes": notes}
+
+
+PUNCT_ALL_RE = re.compile(r"[。！？；，、：,.!?;:]")
+
+
+def normalize_asr_text(text):
+    """去掉 ASR 稿里的格式噪声（行首时间码、说话人前缀、识别占位、标点），保留词语。
+
+    只动格式，不动用词：同音错字属于识别误差，必须留给“依据不匹配”去暴露。
+    标点也算格式——ASR 稿常没有句末标点，若依据抄自人工稿，会因为一个“。”
+    整条判成不匹配，那是格式差异，不是可追溯性问题。
+    """
+    out = []
+    for line in (text or "").splitlines():
+        m = TS_RE.match(line)
+        if m:
+            line = line[m.end():]
+        m = re.match(r"^([^\s：:，。；]{1,12})[：:](.*)$", line)
+        if m:
+            line = m.group(2)
+        line = PLACEHOLDER_RE.sub("", line)
+        out.append(PUNCT_ALL_RE.sub("", line))
+    return "\n".join(out)
+
+
+def derive_names(body_lines):
+    """ASR 稿常没有“参会人：”行：从说话人标签反推人名。
+
+    只认 1–4 个中文字、且出现至少 2 次的标签；“说话人1 / Speaker 2”这类自动
+    编号不算人名——它们在待办表里对不上，硬用只会把 A 通道变成误报源。
+    """
+    cnt = {}
+    for line in body_lines or []:
+        m_ts = TS_RE.match(line)
+        if m_ts:
+            line = line[m_ts.end():]
+        m = re.match(r"^([^\s：:，。；]{1,12})[：:]", line)
+        if not m:
+            continue
+        tag = m.group(1)
+        if not re.fullmatch(r"[\u4e00-\u9fa5]{1,4}", tag):
+            continue
+        if tag in ASR_ENUM_HEADS or tag.startswith(ASR_ENUM_HEADS):
+            continue
+        if SPEAKER_NUM_RE.match(tag):
+            continue
+        cnt[tag] = cnt.get(tag, 0) + 1
+    return [t for t, c in sorted(cnt.items(), key=lambda kv: (-kv[1], kv[0])) if c >= 2]
+
+
+def _split_turn(text, has_ts):
+    """把一轮发言切成句子：标点优先，其次时间码分段，再次逗号，最后按长度兜底。"""
+    parts = [p for p in re.split(r"(?<=[。！？；])", text) if p.strip()]
+    if len(parts) > 1 or (parts and PUNCT_RE.search(parts[0])):
+        return [p.strip() for p in parts]
+    if has_ts:
+        return [text]
+    if len(text) <= 80:
+        return [text]
+    out = []
+    for seg in [s.strip() for s in re.split(r"[，、；]", text) if s.strip()]:
+        while len(seg) > 40:
+            out.append(seg[:40])
+            seg = seg[40:]
+        if seg:
+            out.append(seg)
+    return out or [text]
+
+
 # ---------------------------------------------------------------- 解析
 
 
-def parse_transcript(path):
-    """返回 (参会人名单, [(说话人, 句子), ...])"""
-    with open(path, encoding="utf-8") as f:
-        lines = f.read().splitlines()
+def parse_transcript(path, raw=None):
+    """返回 (参会人名单, [(说话人, 句子), ...])
 
-    names, body = [], []
+    v1.6 起兼容录音识别稿：行首时间码先剥离；“参会人：”缺失时从说话人标签
+    反推名单（只认真名，不认“说话人1”）；无句末标点时按时间码、逗号、长度
+    依次兜底切句。人工整理稿的切分结果与 v1.5 完全一致。
+    """
+    if raw is None:
+        with open(path, encoding="utf-8") as f:
+            raw = f.read()
+    lines = raw.splitlines()
+
+    names = []
     for line in lines:
         m = re.match(r"^参会人[：:](.+)$", line.strip())
         if m:
@@ -125,12 +282,31 @@ def parse_transcript(path):
                 if nm:
                     names.append(nm)
             break
+    if not names:
+        names = derive_names([l.strip() for l in lines if l.strip()])
+
+    body = []
     for line in lines:
-        m = re.match(r"^([\u4e00-\u9fa5]{1,4})[：:](.*)$", line.strip())
-        if m and m.group(1) in names:
-            for sent in re.split(r"(?<=[。！？；])", m.group(2).strip()):
-                if sent.strip():
-                    body.append((m.group(1), sent.strip()))
+        text = line.strip()
+        if not text:
+            continue
+        m_ts = TS_RE.match(text)
+        has_ts = bool(m_ts)
+        if has_ts:
+            text = text[m_ts.end():]
+        m = re.match(r"^([^\s：:，。；]{1,12})[：:](.*)$", text)
+        if not m:
+            continue
+        sp, rest = m.group(1), m.group(2).strip()
+        if not rest:
+            continue
+        if names and sp not in names:
+            continue
+        if not names and (sp in ASR_ENUM_HEADS or sp.startswith(ASR_ENUM_HEADS)):
+            continue
+        for sent in _split_turn(rest, has_ts):
+            if sent.strip():
+                body.append((sp, sent.strip()))
     return names, body
 
 
@@ -200,10 +376,23 @@ def check_quotes(rows, transcript_text, normalize=True):
     checkable=False 表示这条没有依据可查（缺列或空串），它不是“不命中”，
     调用方不得把它算进命中率分母。
     """
+# v1.6：录音识别稿先去掉时间码/说话人前缀/识别占位再比对，避免把“格式差异”
+    # 误判成“依据不可追溯”。严格模式（normalize=False）不做任何归一化，保持原样，
+    # 用来演示噪声本身的影响。
+    asr = detect_asr(transcript_text or "")
+    asr_norm = bool(normalize and asr["is_asr"])
+
     def squeeze(s):
         return re.sub(r"\s+", "", s) if normalize else s
 
-    body = squeeze(transcript_text or "")
+    def clean_quote(s):
+        """依据侧也要按同一口径去噪：只去占位与标点，不剥说话人/时间码。"""
+        s = s.strip("“”\"")
+        if asr_norm:
+            s = PLACEHOLDER_RE.sub("", PUNCT_ALL_RE.sub("", s))
+        return squeeze(s)
+
+    body = squeeze(normalize_asr_text(transcript_text or "")) if asr_norm else squeeze(transcript_text or "")
     results = []
     for r in rows:
         quote = (r.get("原文依据") or "").strip()
@@ -211,7 +400,7 @@ def check_quotes(rows, transcript_text, normalize=True):
         if not parts:
             results.append({"编号": r.get("编号", "?"), "hit": False, "quote": quote, "checkable": False})
             continue
-        ok = all(squeeze(p.strip("“”\"")) in body for p in parts)
+        ok = all(clean_quote(p) in body for p in parts)
         results.append({"编号": r.get("编号", "?"), "hit": ok, "quote": quote, "checkable": True})
     return results
 
