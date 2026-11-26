@@ -112,6 +112,35 @@
   footer{margin-top:34px;font-size:13px;color:var(--muted);border-top:1px solid var(--line);padding-top:16px}
   footer b{color:var(--ink)}
   .mono{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:12px;color:var(--muted)}
+  /* ---- 会议记录卡（可选模块：录音留档 / 逐行录入 / 原稿备份） ---- */
+  .rec{border-color:#cfe0f0;background:linear-gradient(180deg,#fbfdff,#fff)}
+  .rec h2 .idx{background:var(--accent);color:#fff}
+  .rec .rec-opt{font-size:11.5px;color:var(--faint);border:1px solid var(--line-strong);border-radius:999px;padding:0 8px;font-weight:500}
+  .rec-grid{display:grid;grid-template-columns:minmax(270px,1fr) minmax(320px,1.3fr);gap:18px;margin-top:12px}
+  @media(max-width:860px){.rec-grid{grid-template-columns:1fr}}
+  .rec-fld{display:block;font-size:12.5px;color:var(--muted)}
+  .rec-fld>span{display:block;margin-bottom:5px}
+  #rec-title{width:100%;font:inherit;font-size:14px;padding:8px 10px;border:1px solid var(--line-strong);border-radius:8px;background:#fff;color:var(--ink)}
+  #rec-title:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}
+  #rec-speaker{width:100%;font:inherit;font-size:13.5px;padding:7px 10px;border:1px solid var(--line-strong);border-radius:8px;margin-top:8px;background:#fff;color:var(--ink)}
+  #rec-speaker:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}
+  #rec-line{min-height:84px;margin-top:6px}
+  #rec-preview{min-height:168px;margin-top:6px;background:#fbfcfe}
+  .rec-controls{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-top:12px}
+  .rec-clock{display:inline-flex;align-items:center;gap:7px;margin-left:auto;font:600 20px/1 ui-monospace,SFMono-Regular,Consolas,monospace;color:var(--ink);font-variant-numeric:tabular-nums}
+  .rec-dot{width:9px;height:9px;border-radius:50%;background:var(--line-strong)}
+  body.rec-on .rec-dot{background:var(--p0);animation:recpulse 1.4s ease-in-out infinite}
+  @keyframes recpulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.45;transform:scale(.82)}}
+  .rec-meter{display:flex;gap:3px;align-items:flex-end;height:26px;margin-top:10px}
+  .rec-meter i{flex:1;height:5px;border-radius:2px;background:var(--line);transition:height .08s linear,background .12s linear}
+  .rec-meter i.on{height:19px;background:var(--accent)}
+  .rec-meter i.hi{height:26px;background:var(--p0)}
+  .rec-unsupported{margin:10px 0 0;font-size:12.5px;color:#7a4a08;background:var(--p1-bg);border:1px solid #f0d9b5;border-radius:8px;padding:8px 10px}
+  .rec-row{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-top:10px}
+  #rec-mark-note{flex:1;min-width:150px;font:inherit;font-size:13px;padding:7px 10px;border:1px solid var(--line-strong);border-radius:8px;background:#fff;color:var(--ink)}
+  .rec-store{border-top:1px dashed var(--line);padding-top:12px;margin-top:14px}
+  .rec-store .rec-label{font-size:12.5px;color:var(--muted)}
+  #rec-list{flex:1;min-width:210px;font:inherit;font-size:13px;padding:7px 10px;border:1px solid var(--line-strong);border-radius:8px;background:#fff;color:var(--ink)}
   @media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
 </style>
 </head>
@@ -143,6 +172,55 @@
       <button id="import-file">选择文件</button>
       <input type="file" id="import-files" accept=".txt,.md,.markdown,.csv,.tsv,.json" multiple hidden>
       <span class="status" id="import-status"></span>
+    </div>
+  </div>
+
+  <div class="card rec" id="rec" style="grid-column:1/-1">
+    <h2><span class="idx" aria-hidden="true">R</span>会议记录 · 边录边记 <span class="rec-opt">可选</span></h2>
+    <p class="hint">开会时点「开始录音」，随手记要点；成稿自动带时间码与说话人，点「送入质检并运行」直接进下面的「会议转录」跑一遍。<b>不做语音识别</b>——录音只作原稿留档，文字由人边听边记（或平台转写好再贴进来）；录音、文字、打包都只在本机，不联网。</p>
+    <div class="rec-grid">
+      <div>
+        <label class="rec-fld" for="rec-title"><span>会议名</span></label>
+        <input id="rec-title" type="text" placeholder="会议记录 11-26 1430">
+        <div class="rec-controls">
+          <button class="primary" id="rec-start">开始录音</button>
+          <button id="rec-pause" disabled>暂停</button>
+          <button id="rec-stop" disabled>结束</button>
+          <span class="rec-clock"><span class="rec-dot" aria-hidden="true"></span><b id="rec-time">00:00</b></span>
+        </div>
+        <div class="rec-meter" id="rec-meter" aria-hidden="true"></div>
+        <p class="rec-unsupported" id="rec-unsupported" hidden>这个浏览器没给录音接口：<b>文字录入照样能用</b>。要录音请用 Chrome / Edge 打开本页（本地双击可能被拦，线上 Pages 地址或 localhost 最稳）。</p>
+        <p class="status" id="rec-status" role="status" aria-live="polite"></p>
+        <label class="rec-fld" for="rec-speaker"><span>当前说话人（换成谁就改这里）</span></label>
+        <input id="rec-speaker" list="rec-speakers" placeholder="张岚">
+        <datalist id="rec-speakers"></datalist>
+      </div>
+      <div>
+        <label class="rec-fld" for="rec-line"><span>记一条（回车记下，Shift+回车换行）</span></label>
+        <textarea id="rec-line" spellcheck="false" placeholder="王睿：漏斗数据我拉一下，下周二之前给你。"></textarea>
+        <div class="rec-row">
+          <button class="primary" id="rec-say">记一条</button>
+          <input id="rec-mark-note" placeholder="打点备注（可空，如：争议点）">
+          <button id="rec-mark">打点</button>
+        </div>
+      </div>
+    </div>
+    <label class="rec-fld" for="rec-preview"><span>成稿（送入质检的就是这段；时间码与说话人照实录，可手动微调）</span></label>
+    <textarea id="rec-preview" spellcheck="false"></textarea>
+    <div class="rec-row">
+      <button class="primary" id="rec-send">送入质检并运行</button>
+      <button id="rec-save">保存原稿</button>
+      <button id="rec-dl-txt">下载原稿 .txt</button>
+      <button id="rec-dl-audio">下载录音</button>
+      <button id="rec-dl-zip">导出备份包 .zip</button>
+      <button id="rec-clear">清空</button>
+    </div>
+    <div class="rec-row rec-store">
+      <span class="rec-label">本机存档</span>
+      <select id="rec-list" aria-label="本机存档列表"><option value="">本机还没有存档</option></select>
+      <button id="rec-load">载入</button>
+      <button id="rec-del">删除</button>
+      <span class="hint">存档只在本机浏览器；换电脑用「导出备份包」带走</span>
     </div>
   </div>
 
@@ -193,6 +271,13 @@
 
 <script>
 /*==A_CHANNEL==*/
+</script>
+
+<script>
+/*==RECORDER==*/
+</script>
+<script>
+  if (window.RECORDER) RECORDER.mount({});
 </script>
 
 <script>

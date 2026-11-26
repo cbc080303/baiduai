@@ -70,6 +70,12 @@
   .actions .row{margin:0}
   .status{font-size:13px;color:var(--muted);margin:0}
 
+  .import{border-color:var(--accent-line);background:linear-gradient(180deg,#fbfdff,#fff)}
+  .import h2 .idx{background:var(--accent);color:#fff}
+  .classify{margin:18px 0 0;border:1px solid var(--line);background:#f8fafc;border-radius:var(--radius);padding:10px 14px;font-size:12.5px;color:var(--muted);line-height:1.7}
+  .classify b{color:var(--ink);font-weight:650}
+  .classify .k{color:var(--accent);font-weight:600}
+  #import-input{min-height:76px}
   .preflight{margin:22px 0 0;border:1px solid #f0d9b5;background:var(--p1-bg);color:#7a4a08;
     border-radius:var(--radius);padding:12px 14px;font-size:13px}
   .preflight h3{margin:0 0 6px;font-size:14px;font-weight:650;color:#5c3606}
@@ -106,6 +112,35 @@
   footer{margin-top:34px;font-size:13px;color:var(--muted);border-top:1px solid var(--line);padding-top:16px}
   footer b{color:var(--ink)}
   .mono{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:12px;color:var(--muted)}
+  /* ---- 会议记录卡（可选模块：录音留档 / 逐行录入 / 原稿备份） ---- */
+  .rec{border-color:#cfe0f0;background:linear-gradient(180deg,#fbfdff,#fff)}
+  .rec h2 .idx{background:var(--accent);color:#fff}
+  .rec .rec-opt{font-size:11.5px;color:var(--faint);border:1px solid var(--line-strong);border-radius:999px;padding:0 8px;font-weight:500}
+  .rec-grid{display:grid;grid-template-columns:minmax(270px,1fr) minmax(320px,1.3fr);gap:18px;margin-top:12px}
+  @media(max-width:860px){.rec-grid{grid-template-columns:1fr}}
+  .rec-fld{display:block;font-size:12.5px;color:var(--muted)}
+  .rec-fld>span{display:block;margin-bottom:5px}
+  #rec-title{width:100%;font:inherit;font-size:14px;padding:8px 10px;border:1px solid var(--line-strong);border-radius:8px;background:#fff;color:var(--ink)}
+  #rec-title:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}
+  #rec-speaker{width:100%;font:inherit;font-size:13.5px;padding:7px 10px;border:1px solid var(--line-strong);border-radius:8px;margin-top:8px;background:#fff;color:var(--ink)}
+  #rec-speaker:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}
+  #rec-line{min-height:84px;margin-top:6px}
+  #rec-preview{min-height:168px;margin-top:6px;background:#fbfcfe}
+  .rec-controls{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-top:12px}
+  .rec-clock{display:inline-flex;align-items:center;gap:7px;margin-left:auto;font:600 20px/1 ui-monospace,SFMono-Regular,Consolas,monospace;color:var(--ink);font-variant-numeric:tabular-nums}
+  .rec-dot{width:9px;height:9px;border-radius:50%;background:var(--line-strong)}
+  body.rec-on .rec-dot{background:var(--p0);animation:recpulse 1.4s ease-in-out infinite}
+  @keyframes recpulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.45;transform:scale(.82)}}
+  .rec-meter{display:flex;gap:3px;align-items:flex-end;height:26px;margin-top:10px}
+  .rec-meter i{flex:1;height:5px;border-radius:2px;background:var(--line);transition:height .08s linear,background .12s linear}
+  .rec-meter i.on{height:19px;background:var(--accent)}
+  .rec-meter i.hi{height:26px;background:var(--p0)}
+  .rec-unsupported{margin:10px 0 0;font-size:12.5px;color:#7a4a08;background:var(--p1-bg);border:1px solid #f0d9b5;border-radius:8px;padding:8px 10px}
+  .rec-row{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-top:10px}
+  #rec-mark-note{flex:1;min-width:150px;font:inherit;font-size:13px;padding:7px 10px;border:1px solid var(--line-strong);border-radius:8px;background:#fff;color:var(--ink)}
+  .rec-store{border-top:1px dashed var(--line);padding-top:12px;margin-top:14px}
+  .rec-store .rec-label{font-size:12.5px;color:var(--muted)}
+  #rec-list{flex:1;min-width:210px;font:inherit;font-size:13px;padding:7px 10px;border:1px solid var(--line-strong);border-radius:8px;background:#fff;color:var(--ink)}
   @media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
 </style>
 </head>
@@ -128,13 +163,76 @@
 </header>
 
 <div class="grid">
+  <div class="card import" style="grid-column:1/-1">
+    <h2><span class="idx" aria-hidden="true">0</span>把材料丢进来就行</h2>
+    <p class="hint">粘贴一段文字、拖入文件、或点「选择文件」（可多选）。系统会自己判断哪份是会议转录、哪份是待办表，放进下面两个框；两份齐了自动跑一遍。人工整理的稿子、录音转写稿、会议纪要都不用手工转换。</p>
+    <textarea id="import-input" spellcheck="false" placeholder="把会议转录、录音转写稿、或待办表直接粘进这里……"></textarea>
+    <div class="row">
+      <button class="primary" id="import-run">分拣并跑</button>
+      <button id="import-file">选择文件</button>
+      <input type="file" id="import-files" accept=".txt,.md,.markdown,.csv,.tsv,.json" multiple hidden>
+      <span class="status" id="import-status"></span>
+    </div>
+  </div>
+
+  <div class="card rec" id="rec" style="grid-column:1/-1">
+    <h2><span class="idx" aria-hidden="true">R</span>会议记录 · 边录边记 <span class="rec-opt">可选</span></h2>
+    <p class="hint">开会时点「开始录音」，随手记要点；成稿自动带时间码与说话人，点「送入质检并运行」直接进下面的「会议转录」跑一遍。<b>不做语音识别</b>——录音只作原稿留档，文字由人边听边记（或平台转写好再贴进来）；录音、文字、打包都只在本机，不联网。</p>
+    <div class="rec-grid">
+      <div>
+        <label class="rec-fld" for="rec-title"><span>会议名</span></label>
+        <input id="rec-title" type="text" placeholder="会议记录 11-26 1430">
+        <div class="rec-controls">
+          <button class="primary" id="rec-start">开始录音</button>
+          <button id="rec-pause" disabled>暂停</button>
+          <button id="rec-stop" disabled>结束</button>
+          <span class="rec-clock"><span class="rec-dot" aria-hidden="true"></span><b id="rec-time">00:00</b></span>
+        </div>
+        <div class="rec-meter" id="rec-meter" aria-hidden="true"></div>
+        <p class="rec-unsupported" id="rec-unsupported" hidden>这个浏览器没给录音接口：<b>文字录入照样能用</b>。要录音请用 Chrome / Edge 打开本页（本地双击可能被拦，线上 Pages 地址或 localhost 最稳）。</p>
+        <p class="status" id="rec-status" role="status" aria-live="polite"></p>
+        <label class="rec-fld" for="rec-speaker"><span>当前说话人（换成谁就改这里）</span></label>
+        <input id="rec-speaker" list="rec-speakers" placeholder="张岚">
+        <datalist id="rec-speakers"></datalist>
+      </div>
+      <div>
+        <label class="rec-fld" for="rec-line"><span>记一条（回车记下，Shift+回车换行）</span></label>
+        <textarea id="rec-line" spellcheck="false" placeholder="王睿：漏斗数据我拉一下，下周二之前给你。"></textarea>
+        <div class="rec-row">
+          <button class="primary" id="rec-say">记一条</button>
+          <input id="rec-mark-note" placeholder="打点备注（可空，如：争议点）">
+          <button id="rec-mark">打点</button>
+        </div>
+      </div>
+    </div>
+    <label class="rec-fld" for="rec-preview"><span>成稿（送入质检的就是这段；时间码与说话人照实录，可手动微调）</span></label>
+    <textarea id="rec-preview" spellcheck="false"></textarea>
+    <div class="rec-row">
+      <button class="primary" id="rec-send">送入质检并运行</button>
+      <button id="rec-save">保存原稿</button>
+      <button id="rec-dl-txt">下载原稿 .txt</button>
+      <button id="rec-dl-audio">下载录音</button>
+      <button id="rec-dl-zip">导出备份包 .zip</button>
+      <button id="rec-clear">清空</button>
+    </div>
+    <div class="rec-row rec-store">
+      <span class="rec-label">本机存档</span>
+      <select id="rec-list" aria-label="本机存档列表"><option value="">本机还没有存档</option></select>
+      <button id="rec-load">载入</button>
+      <button id="rec-del">删除</button>
+      <span class="hint">存档只在本机浏览器；换电脑用「导出备份包」带走</span>
+    </div>
+  </div>
+
   <div class="card">
     <h2><span class="idx" aria-hidden="true">1</span>会议转录</h2>
-    <p class="hint">每行必须是 <span class="mono">姓名：内容</span> 的逐字转录；首行写 <span class="mono">参会人：张三、李四</span>。有名单才能做按人切片。</p>
-    <p class="hint warn">注意：粘「会议纪要正文」不行——那是概括过的文字，依据必然大面积不匹配。要逐字转写稿。</p>
+    <p class="hint">自动分拣会填这里；也可以自己粘。人工稿写 <span class="mono">姓名：内容</span>，录音转写稿带时间码和「听不清」也没关系，首行 <span class="mono">参会人：张三、李四</span> 缺了会从说话人标签反推。</p>
+    <p class="hint warn">只有「会议纪要正文」不行——那是概括过的文字，依据必然大面积不匹配。粘进来时体检会明确告诉你这一点，不会假装跑出 0 分。</p>
     <textarea id="tr-input" spellcheck="false" placeholder="参会人：张岚、王睿、李思远&#10;&#10;张岚：今天三件事……&#10;王睿：漏斗数据我拉一下，下周二之前给你。"></textarea>
     <div class="row">
       <button id="load-sample">载入样例</button>
+      <button id="tr-file-btn">从文件导入</button>
+      <input type="file" id="tr-file" accept=".txt,.md,.markdown,.csv,.tsv" hidden>
       <button id="clear-all">清空</button>
     </div>
   </div>
@@ -145,9 +243,9 @@
     <p class="hint warn">「原文依据」这一列不能省：没有它就无法做依据回查，工具会明确标成「不可检」而不是「全部不匹配」。</p>
     <textarea id="todo-input" spellcheck="false" placeholder="编号,任务,负责人,截止时间,约束,原文依据&#10;1,拉取漏斗数据按渠道拆分,王睿,下周二前,按渠道拆分,&quot;王睿，你把漏斗数据拉出来……&quot;"></textarea>
     <div class="row">
-      <label class="chk"><input type="checkbox" id="ignore-space" checked> 忽略空白差异（默认开）</label>
-      <button id="pick-file">从文件导入 CSV</button>
-      <input type="file" id="file-input" accept=".csv,.tsv,.txt" hidden>
+      <label class="chk"><input type="checkbox" id="ignore-space" checked> 自动适配材料形态（默认开）</label>
+      <button id="pick-file">从文件导入</button>
+      <input type="file" id="file-input" accept=".txt,.md,.markdown,.csv,.tsv" hidden>
     </div>
   </div>
 </div>
@@ -243,6 +341,146 @@ const A_CHANNEL = (function(){
     return text.replace(INVITEE_RE, "");
   }
 
+  // ---- v1.5 录音识别（ASR）稿适配：与 qc_tools.py v1.6 同口径 ----
+  const TS_RE = /^\s*[\[\(【]?(\d{1,3}:\d{2}(?::\d{2})?(?:[.,]\d{1,3})?)[\]\)】]?\s*/;
+  const PLACEHOLDER_RE = /[\[\(（【]\s*(听不清|听不见|无法识别|噪声|噪音|音乐|笑声|掌声|沉默|静音|重叠|unintelligible|inaudible|noise|music|laughter|silence|overlap)\s*[\]\)）】]/gi;
+  const PUNCT_ALL_RE = /[。！？；，、：,.!?;:]/g;
+  const ASR_ENUM_HEADS = ["说话人", "发言人", "嘉宾"];
+  const FORM_CN = {"timestamp+speaker": "时间码+说话人", "speaker": "仅说话人标记",
+                   "timestamp": "仅时间码", "plain": "纯文本", "empty": "空输入"};
+  const VERDICT_CN = {"usable": "可检", "degraded": "降级可检", "unusable": "不可检"};
+
+  function isEnumHead(tag){
+    return ASR_ENUM_HEADS.some(h => tag.indexOf(h) === 0);
+  }
+
+  // 检测这段文字是不是录音识别稿，并给出可机械核对的指标
+  function detectAsr(raw){
+    const lines = String(raw || "").split(/\r?\n/).map(s => s.trim()).filter(Boolean);
+    const total = lines.length;
+    if (!total) return {form: "empty", is_asr: false, lines: 0, ts_lines: 0, speaker_lines: 0,
+      placeholder: 0, punctless_long: 0, ts_ratio: 0, speaker_ratio: 0, punctless_ratio: 0,
+      verdict: "unusable", notes: ["输入为空。"]};
+    let tsLines = 0, spkLines = 0, punctless = 0;
+    lines.forEach(line0 => {
+      let line = line0;
+      if (TS_RE.test(line)){ tsLines++; line = line.replace(TS_RE, ""); }
+      const m = line.match(/^([^\s：:，。；]{1,12})[：:](.*)$/);
+      if (m){ spkLines++; line = m[2]; }
+      const body = line.trim();
+      if (body.length >= 30 && !/[。！？；]/.test(body) && !/[，、]/.test(body)) punctless++;
+    });
+    const ph = (String(raw || "").match(PLACEHOLDER_RE) || []).length;
+    const tsRatio = tsLines / total, spkRatio = spkLines / total, plRatio = punctless / total;
+    const isAsr = !!(tsLines || ph || plRatio >= 0.3);
+    const form = (tsLines && spkLines) ? "timestamp+speaker"
+      : (spkLines ? "speaker" : (tsLines ? "timestamp" : "plain"));
+    const notes = [];
+    if (isAsr && !spkLines) notes.push("没有说话人标记：按人切片的遗漏检查无法执行，只能跑依据回查与字段核查。");
+    if (isAsr && plRatio >= 0.3) notes.push("有 " + punctless + " 行是没有标点的长句：按标点切句会失效，需按时间码或长度切。");
+    if (ph) notes.push("含 " + ph + " 处识别占位（“听不清”“笑声”等）：这些位置不能当依据原句。");
+    if (!isAsr && !spkLines) notes.push("无时间码、无说话人标记、句子带标点：按人工整理稿处理。");
+    const verdict = (isAsr && spkRatio >= 0.8) ? "usable"
+      : (isAsr && spkRatio > 0) ? "degraded" : (isAsr ? "unusable" : "usable");
+    return {form: form, is_asr: isAsr, lines: total, ts_lines: tsLines, speaker_lines: spkLines,
+      placeholder: ph, punctless_long: punctless, ts_ratio: tsRatio, speaker_ratio: spkRatio,
+      punctless_ratio: plRatio, verdict: verdict, notes: notes};
+  }
+
+  // v1.6 材料分拣：结构判断（表头+分列 → 待办表；说话人前缀占比 → 转录）
+  const TODO_HEAD_KW = ["任务", "待办", "负责人", "责任人", "截止时间", "时限", "原文依据", "依据", "约束", "编号", "序号"];
+  const SPEAKER_LINE_RE = /^[^\s：:，。；]{1,12}[：:]\s*\S/;
+
+  function classifyMaterial(text){
+    const raw = String(text == null ? "" : text).replace(/\r\n?/g, "\n");
+    const lines = raw.split("\n").map(s => s.trim()).filter(Boolean);
+    if (!lines.length) return {kind: "empty", todo_score: 0, transcript_score: 0,
+      reasons: ["材料为空。"], head_hits: [], cols: 0, speaker_ratio: 0, asr: detectAsr(raw)};
+    const head = lines[0];
+    const headHits = TODO_HEAD_KW.filter(k => head.indexOf(k) >= 0);
+    let delim = "";
+    if (head.trim().indexOf("|") === 0) delim = "|";
+    else if (head.indexOf("\t") >= 0) delim = "\t";
+    else if ((head.match(/,/g) || []).length >= 2) delim = ",";
+    else if ((head.match(/，/g) || []).length >= 2) delim = "，";
+    const cols = delim ? head.split(delim).filter(c => c.trim()).length : 0;
+    const reasons = [];
+    let todoScore = 0;
+    if (headHits.length >= 2 && cols >= 3){
+      todoScore += 3;
+      reasons.push("首行像表头（" + headHits.slice(0, 4).join("、") + "），分成 " + cols + " 列");
+    } else if (headHits.length >= 2){
+      todoScore += 1;
+      reasons.push("首行有多个表头词，但没分成列");
+    }
+    if (lines.length >= 2 && cols >= 3) todoScore += 1;
+    let spk = 0;
+    lines.forEach(l => {
+      let t = l;
+      if (TS_RE.test(t)) t = t.replace(TS_RE, "");
+      if (SPEAKER_LINE_RE.test(t)) spk++;
+    });
+    const spkRatio = spk / lines.length;
+    let trScore = 0;
+    // 只认「过半行是发言行」这一条硬证据：说明类文档里零星几行“XX：”不算转录，
+    // 弱加分曾把组织视图、纪要正文误判成转录。
+    // 另需至少 3 行发言行：单行材料（例如只有「参会人：张三、李四」）ratio 恒为 1，
+// 不加这道下限会把一行名单判成整份转录。
+    if (spkRatio >= 0.5 && spk >= 3){ trScore += 3; reasons.push(spk + "/" + lines.length + " 行是「姓名：内容」式发言"); }
+    if (/参会人[：:]/.test(raw)){ trScore += 1; reasons.push("含「参会人：」行"); }
+    const asr = detectAsr(raw);
+    if (asr.is_asr){ trScore += 1; reasons.push("含时间码或识别占位，属录音转写稿"); }
+    let kind;
+    if (todoScore >= 3 && todoScore >= trScore) kind = "todo";
+    else if (trScore >= 2 && trScore > todoScore) kind = "transcript";
+    else if (todoScore >= 1 && !trScore) kind = "todo";
+    else kind = "unknown";   // 证据不足就不猜：页面会把它放进空框并提示核对
+    return {kind: kind, todo_score: todoScore, transcript_score: trScore, reasons: reasons,
+            head_hits: headHits, cols: cols, speaker_ratio: spkRatio, asr: asr};
+  }
+
+  // 去格式噪声：时间码、说话人前缀、识别占位、标点；不动用词
+  function asrNormalize(raw){
+    return String(raw || "").split(/\r?\n/).map(line => {
+      let s = line;
+      if (TS_RE.test(s)) s = s.replace(TS_RE, "");
+      const m = s.match(/^([^\s：:，。；]{1,12})[：:](.*)$/);
+      if (m) s = m[2];
+      return s.replace(PLACEHOLDER_RE, "").replace(PUNCT_ALL_RE, "");
+    }).join("\n");
+  }
+
+  // 一轮发言切成句子：标点优先，其次时间码，再次逗号，最后按 40 字兜底
+  function splitTurn(text, hasTs){
+    const parts = text.match(/[^。！？；]*[。！？；]|[^。！？；]+/g) || [];
+    if (parts.length > 1) return parts.map(p => p.trim()).filter(Boolean);
+    if (hasTs) return [text];
+    if (text.length <= 80) return [text];
+    const out = [];
+    text.split(/[，、；]/).forEach(seg => {
+      let s = seg.trim();
+      while (s.length > 40){ out.push(s.slice(0, 40)); s = s.slice(40); }
+      if (s) out.push(s);
+    });
+    return out.length ? out : [text];
+  }
+
+  // 没有「参会人：」行时，从说话人标签反推真名（只认出现 ≥2 次的 1–4 字标签）
+  function deriveNames(lines){
+    const cnt = {};
+    lines.forEach(raw => {
+      let line = String(raw);
+      if (TS_RE.test(line)) line = line.replace(TS_RE, "");
+      const m = line.match(/^([^\s：:，。；]{1,12})[：:]/);
+      if (!m) return;
+      const tag = m[1];
+      if (!/^[\u4e00-\u9fa5]{1,4}$/.test(tag) || isEnumHead(tag)) return;
+      cnt[tag] = (cnt[tag] || 0) + 1;
+    });
+    return Object.keys(cnt).filter(t => cnt[t] >= 2)
+      .sort((a, b) => (cnt[b] - cnt[a]) || (a < b ? -1 : 1));
+  }
+
   // 解析：返回 { names, body:[[speaker, sentence], ...] }
   function parseTranscript(raw){
     const lines = String(raw || "").split(/\r?\n/);
@@ -254,13 +492,21 @@ const A_CHANNEL = (function(){
         break;
       }
     }
+    if (!names.length) names = deriveNames(lines);
     const body = [];
     for (const line of lines){
-      // v1.3：姓名由 2–4 字放宽为 1–4 字，兼容单字代称脱敏
-      const m = line.trim().match(/^([\u4e00-\u9fa5]{1,4})[：:](.*)$/);
-      if (!m || names.indexOf(m[1]) < 0) continue;
-      const parts = m[2].trim().match(/[^。！？；]*[。！？；]|[^。！？；]+/g) || [];
-      for (const p of parts) if (p.trim()) body.push([m[1], p.trim()]);
+      // v1.3 姓名 1–4 字兼容单字代称；v1.5 先剥行首时间码，姓名放宽到 12 字符以容纳英文名
+      let text = String(line).trim();
+      if (!text) continue;
+      const hasTs = TS_RE.test(text);
+      if (hasTs) text = text.replace(TS_RE, "");
+      const m = text.match(/^([^\s：:，。；]{1,12})[：:](.*)$/);
+      if (!m) continue;
+      const sp = m[1], rest = m[2].trim();
+      if (!rest) continue;
+      if (names.length && names.indexOf(sp) < 0) continue;
+      if (!names.length && isEnumHead(sp)) continue;
+      splitTurn(rest, hasTs).forEach(p => { if (p) body.push([sp, p]); });
     }
     return {names, body};
   }
@@ -465,19 +711,824 @@ const A_CHANNEL = (function(){
     const res = sliceScan(p.names, sentences, rows || []);
     // v1.3：把“静默归零”变成可解释的提示。切句为 0 时最可能的原因是
     // 发言行格式不对或姓名与名单不一致（单字代称曾经整条失配且不报错）。
+    const asr = detectAsr(raw);
+    const hasRoster = /参会人[：:]/.test(String(raw || ""));
     let warn = null;
     if (!p.names.length){
       warn = "没读到「参会人：」行";
     } else if (!sentences.length){
       warn = "读到了名单（" + p.names.length + " 人），但一句发言都没切出来——请检查每行是否为「姓名：内容」，且姓名与「参会人：」行里的一致。单字代称（甲/乙/丙/丁）已支持。";
+    } else if (asr.is_asr && !hasRoster){
+      warn = "识别为录音转写稿：名单由说话人标签反推 " + p.names.length + " 人，建议核对是否漏人；依据比对已自动去掉时间码与识别占位。";
     }
-    return {names: p.names, count: sentences.length, cands: res.cands, low: res.low, orgs: res.orgs, warn: warn};
+    return {names: p.names, count: sentences.length, cands: res.cands, low: res.low, orgs: res.orgs, warn: warn, asr: asr};
   }
 
-  return {scan, _sliceScan: sliceScan};
+  return {scan, _sliceScan: sliceScan, detectAsr, asrNormalize, parseTranscript, classifyMaterial};
 })();
 
 /* CommonJS 导出已在单文件构建中移除 */
+</script>
+
+<script>
+/* 会议记录器 · recorder.js  v1.0
+ *
+ * 定位：给质检工作台补一段“采集”。开会时边录边记，散会后录音与文字原稿都在本机，
+ * 文字成稿一键进入质检功能区，不用手工转格式。
+ *
+ * 三条硬边界（写死在这里，页面文案与测试都要对得上）：
+ *   1. 不做语音识别。浏览器拿不到文字，录音只作原稿留档；文字由人边听边记，
+ *      或由平台侧（会议 MCP）转写后再贴进来。
+ *   2. 不联网。录音、存档、打包全在本机内存与 IndexedDB 内完成，无任何请求。
+ *   3. 只改格式，不改内容。生成的时间码与说话人前缀取自录入时的真实时刻与人名，
+ *      不补词、不纠错。
+ *
+ * 与质检端的契约：成稿第一行是「参会人：A、B」，其后每行「[mm:ss] 说话人：内容」。
+ * 这正好是 qc_tools.parse_transcript 与 a_channel.scan 都能消费的形态（人工稿）；
+ * 打点行不进成稿，只进原稿备份，避免把备注当成发言切句。
+ */
+
+var RECORDER = (function () {
+  "use strict";
+
+  var VERSION = "1.0";
+  var DEFAULT_SPEAKER = "未标注";
+  var MARK_PREFIX = "※";
+
+  /* ---------------- 时间与文本 ---------------- */
+
+  function pad2(n) {
+    n = Math.floor(Math.abs(n));
+    return (n < 10 ? "0" : "") + n;
+  }
+
+  // 秒 -> [HH:MM:SS]（清单要能一眼对上录音进度，所以带小时位）
+  function stamp(secs) {
+    var s = Math.max(0, Math.floor(Number(secs) || 0));
+    var h = Math.floor(s / 3600);
+    var m = Math.floor((s % 3600) / 60);
+    return "[" + pad2(h) + ":" + pad2(m) + ":" + pad2(s % 60) + "]";
+  }
+
+  // 秒 -> MM:SS（计时器与列表用短格式）
+  function clock(secs) {
+    var s = Math.max(0, Math.floor(Number(secs) || 0));
+    return pad2(Math.floor(s / 60)) + ":" + pad2(s % 60);
+  }
+
+  function clean(s) {
+    return String(s == null ? "" : s).replace(/\r\n?/g, "\n").replace(/[\t ]+$/gm, "");
+  }
+
+  // 说话人去重，保留首次出现顺序；空说话人落到「未标注」
+  function collectNames(turns, extra) {
+    var seen = {};
+    var out = [];
+    function push(raw) {
+      var nm = String(raw == null ? "" : raw).trim().replace(/[：:、，,]/g, "");
+      if (!nm) return;
+      if (seen[nm]) return;
+      seen[nm] = 1;
+      out.push(nm);
+    }
+    (extra || []).forEach(push);
+    (turns || []).forEach(function (t) {
+      if (t && t.speaker) push(t.speaker);
+      else if (t && t.text) push(DEFAULT_SPEAKER);
+    });
+    return out;
+  }
+
+  function namesLine(names) {
+    return "参会人：" + (names.length ? names.join("、") : DEFAULT_SPEAKER);
+  }
+
+  // 成稿：参会人行 + 逐条发言；打点行与空行不进成稿
+  function buildScript(turns, extraNames) {
+    var names = collectNames(turns, extraNames);
+    var body = [];
+    (turns || []).forEach(function (t) {
+      if (!t || t.mark) return;
+      var text = clean(t.text).replace(/\n+/g, " ").trim();
+      if (!text) return;
+      var sp = String(t.speaker == null ? "" : t.speaker).trim() || DEFAULT_SPEAKER;
+      body.push(stamp(t.at) + " " + sp + "：" + text);
+    });
+    return namesLine(names) + "\n\n" + body.join("\n");
+  }
+
+  // 换行提交的单条文本也要能被质检切句：多行压成一句，句间补句号
+  function oneLine(text) {
+    return clean(text).split(/\n+/).map(function (s) {
+      return s.trim();
+    }).filter(Boolean).join("。").replace(/。{2,}/g, "。");
+  }
+
+  // 预览追加：先同步参会人行，再把新行接到末尾。保留用户手动改过的正文。
+  function appendLine(previewText, turns, turn) {
+    var names = collectNames(turns);
+    var head = namesLine(names);
+    var rest = clean(previewText);
+    var nameRe = /^参会人[：:].*(\n|$)/;
+    if (nameRe.test(rest)) rest = rest.replace(nameRe, "").replace(/^\n+/, "");
+    var line;
+    if (turn && turn.mark) {
+      var note = String(turn.mark).trim();
+      line = stamp(turn.at) + " " + MARK_PREFIX + (note ? " " + note : "");
+    } else if (turn) {
+      var sp = String(turn.speaker == null ? "" : turn.speaker).trim() || DEFAULT_SPEAKER;
+      line = stamp(turn.at) + " " + sp + "：" + clean(turn.text).replace(/\n+/g, " ").trim();
+    } else {
+      line = "";
+    }
+    var body = rest.replace(/\s+$/, "");
+    return head + "\n\n" + (line ? (body ? body + "\n" + line : line) : body);
+  }
+
+  /* ---------------- 原稿备份文本 ---------------- */
+
+  function two(n) {
+    return pad2(n);
+  }
+
+  function dateText(ts) {
+    var d = new Date(ts || Date.now());
+    return d.getFullYear() + "-" + two(d.getMonth() + 1) + "-" + two(d.getDate()) +
+      " " + two(d.getHours()) + ":" + two(d.getMinutes());
+  }
+
+  function fileStamp(ts) {
+    var d = new Date(ts || Date.now());
+    return "" + d.getFullYear() + two(d.getMonth() + 1) + two(d.getDate()) + "-" + two(d.getHours()) + two(d.getMinutes());
+  }
+
+  // 原稿备份 = 元信息头 + 完整正文（含打点）。元信息行不带「姓名：」结构，
+  // 解析端会跳过，因此这份文件既能给人看，也能直接再送进质检。
+  function buildBackup(rec) {
+    rec = rec || {};
+    var turns = rec.turns || [];
+    var names = collectNames(turns, rec.names);
+    var head = [
+      "# 会议记录：" + (rec.title || "未命名会议"),
+      "# 记录时间：" + dateText(rec.createdAt),
+      "# 时长：" + clock(rec.duration || 0),
+      "# 说话人：" + (names.length ? names.join("、") : DEFAULT_SPEAKER),
+      "# 记录方式：" + (rec.audio ? "录音 + 速记（录音随包留档）" : "纯文字录入"),
+      "# 说明：本文件是原稿备份，时间码与说话人前缀照录入原样保留；不做语音识别，不补词不改字。"
+    ];
+    var body = [];
+    turns.forEach(function (t) {
+      if (!t) return;
+      if (t.mark) {
+        var note = String(t.mark).trim();
+        body.push(stamp(t.at) + " " + MARK_PREFIX + (note ? " " + note : ""));
+        return;
+      }
+      var text = clean(t.text).replace(/\n+/g, " ").trim();
+      if (!text) return;
+      var sp = String(t.speaker == null ? "" : t.speaker).trim() || DEFAULT_SPEAKER;
+      body.push(stamp(t.at) + " " + sp + "：" + text);
+    });
+    return head.join("\n") + "\n\n" + namesLine(names) + "\n\n" + body.join("\n") + "\n";
+  }
+
+  function buildMeta(rec) {
+    rec = rec || {};
+    var names = collectNames(rec.turns, rec.names);
+    return JSON.stringify({
+      app: "会议待办质检器 · 会议记录器",
+      version: VERSION,
+      title: rec.title || "未命名会议",
+      createdAt: rec.createdAt || Date.now(),
+      createdAtText: dateText(rec.createdAt),
+      durationSec: Math.floor(rec.duration || 0),
+      speakerCount: names.length,
+      speakers: names,
+      turns: (rec.turns || []).length,
+      marks: (rec.turns || []).filter(function (t) { return t && t.mark; }).length,
+      hasAudio: !!rec.audio,
+      audioType: rec.audioType || "",
+      asr: false
+    }, null, 2);
+  }
+
+  /* ---------------- ZIP（store，无压缩） ---------------- */
+
+  var CRC_TABLE = (function () {
+    var t = new Int32Array(256);
+    for (var i = 0; i < 256; i++) {
+      var c = i;
+      for (var k = 0; k < 8; k++) c = (c & 1) ? (0xedb88320 ^ (c >>> 1)) : (c >>> 1);
+      t[i] = c;
+    }
+    return t;
+  })();
+
+  function crc32(bytes) {
+    var c = -1;
+    for (var i = 0; i < bytes.length; i++) c = CRC_TABLE[(c ^ bytes[i]) & 0xff] ^ (c >>> 8);
+    return (c ^ -1) >>> 0;
+  }
+
+  function utf8(str) {
+    if (typeof TextEncoder !== "undefined") return new TextEncoder().encode(String(str));
+    var s = unescape(encodeURIComponent(String(str)));
+    var out = new Uint8Array(s.length);
+    for (var i = 0; i < s.length; i++) out[i] = s.charCodeAt(i) & 0xff;
+    return out;
+  }
+
+  function dosTime(ts) {
+    var d = new Date(ts || 0);
+    var y = d.getFullYear();
+    if (!(y >= 1980)) return { time: 0, date: 33 }; // 1980-01-01 00:00
+    return {
+      time: ((d.getHours() & 31) << 11) | ((d.getMinutes() & 63) << 5) | ((Math.floor(d.getSeconds() / 2)) & 31),
+      date: (((y - 1980) & 127) << 9) | (((d.getMonth() + 1) & 15) << 5) | (d.getDate() & 31)
+    };
+  }
+
+  function u16(v) { return [v & 0xff, (v >>> 8) & 0xff]; }
+  function u32(v) { return [v & 0xff, (v >>> 8) & 0xff, (v >>> 16) & 0xff, (v >>> 24) & 0xff]; }
+
+  // files: [{name, data}]，data 可以是字符串或 Uint8Array。返回 Uint8Array。
+  function zip(files, mtime) {
+    var dt = dosTime(mtime);
+    var chunks = [];
+    var central = [];
+    var offset = 0;
+    (files || []).forEach(function (f) {
+      var nameBytes = utf8(f.name);
+      var data = typeof f.data === "string" ? utf8(f.data) : (f.data || new Uint8Array(0));
+      var crc = crc32(data);
+      var local = [].concat(
+        u32(0x04034b50), u16(20), u16(0x0800), u16(0), u16(dt.time), u16(dt.date),
+        u32(crc), u32(data.length), u32(data.length), u16(nameBytes.length), u16(0)
+      );
+      var localBytes = new Uint8Array(local.length + nameBytes.length);
+      localBytes.set(local, 0);
+      localBytes.set(nameBytes, local.length);
+      chunks.push(localBytes, data);
+      var cen = [].concat(
+        u32(0x02014b50), u16(20), u16(20), u16(0x0800), u16(0), u16(dt.time), u16(dt.date),
+        u32(crc), u32(data.length), u32(data.length), u16(nameBytes.length), u16(0), u16(0),
+        u16(0), u16(0), u32(0), u32(offset)
+      );
+      var cenBytes = new Uint8Array(cen.length + nameBytes.length);
+      cenBytes.set(cen, 0);
+      cenBytes.set(nameBytes, cen.length);
+      central.push(cenBytes);
+      offset += localBytes.length + data.length;
+    });
+    var cdSize = central.reduce(function (a, b) { return a + b.length; }, 0);
+    var end = new Uint8Array([].concat(
+      u32(0x06054b50), u16(0), u16(0), u16(files.length), u16(files.length),
+      u32(cdSize), u32(offset), u16(0)
+    ));
+    var total = offset + cdSize + end.length;
+    var out = new Uint8Array(total);
+    var p = 0;
+    chunks.concat(central, [end]).forEach(function (c) { out.set(c, p); p += c.length; });
+    return out;
+  }
+
+  /* ---------------- 本地存档（IndexedDB / 内存） ---------------- */
+
+  function createMemoryAdapter() {
+    var rows = [];
+    return {
+      put: function (rec) {
+        var i = rows.findIndex(function (r) { return r.id === rec.id; });
+        if (i >= 0) rows[i] = rec; else rows.push(rec);
+        return Promise.resolve(rec.id);
+      },
+      all: function () { return Promise.resolve(rows.slice()); },
+      get: function (id) { return Promise.resolve(rows.filter(function (r) { return r.id === id; })[0] || null); },
+      del: function (id) {
+        rows = rows.filter(function (r) { return r.id !== id; });
+        return Promise.resolve(true);
+      }
+    };
+  }
+
+  function idbAdapter(name, storeName) {
+    var dbp = null;
+    function open() {
+      if (dbp) return dbp;
+      dbp = new Promise(function (resolve, reject) {
+        var req = indexedDB.open(name, 1);
+        req.onupgradeneeded = function () {
+          var db = req.result;
+          if (!db.objectStoreNames.contains(storeName)) db.createObjectStore(storeName, { keyPath: "id" });
+        };
+        req.onsuccess = function () { resolve(req.result); };
+        req.onerror = function () { reject(req.error); };
+      });
+      return dbp;
+    }
+    function run(mode, fn) {
+      return open().then(function (db) {
+        return new Promise(function (resolve, reject) {
+          var tx = db.transaction(storeName, mode);
+          var st = tx.objectStore(storeName);
+          var req = fn(st);
+          req.onsuccess = function () { resolve(req.result); };
+          req.onerror = function () { reject(req.error); };
+        });
+      });
+    }
+    return {
+      put: function (rec) { return run("readwrite", function (st) { return st.put(rec); }); },
+      all: function () { return run("readonly", function (st) { return st.getAll(); }); },
+      get: function (id) { return run("readonly", function (st) { return st.get(id); }); },
+      del: function (id) { return run("readwrite", function (st) { return st["delete"](id); }); }
+    };
+  }
+
+  function createStore(adapter) {
+    function sortDesc(rows) {
+      return rows.slice().sort(function (a, b) { return (b.createdAt || 0) - (a.createdAt || 0); });
+    }
+    return {
+      save: function (rec) {
+        rec.savedAt = Date.now();
+        return adapter.put(rec);
+      },
+      list: function () { return adapter.all().then(sortDesc); },
+      get: function (id) { return adapter.get(id); },
+      remove: function (id) { return adapter.del(id); }
+    };
+  }
+
+  function newId() {
+    return "rec-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 7);
+  }
+
+  /* ---------------- 录音机（浏览器） ---------------- */
+
+  function makeRecorder(hooks) {
+    hooks = hooks || {};
+    var supported = typeof navigator !== "undefined" &&
+      navigator.mediaDevices && typeof navigator.mediaDevices.getUserMedia === "function" &&
+      typeof window !== "undefined" && typeof window.MediaRecorder !== "undefined";
+    var stream = null, mr = null, chunks = [], startedAt = 0, pausedMs = 0, pauseAt = 0;
+    var timer = null, meterTimer = null, audioCtx = null, analyser = null, raf = null;
+
+    function now() { return Date.now(); }
+
+    function elapsed() {
+      if (!startedAt) return 0;
+      var end = pausedMs ? pauseAt : now();
+      return Math.max(0, Math.floor((end - startedAt - pausedMs) / 1000));
+    }
+
+    function stopMeter() {
+      if (raf && window.cancelAnimationFrame) window.cancelAnimationFrame(raf);
+      raf = null;
+      if (meterTimer) { clearInterval(meterTimer); meterTimer = null; }
+      if (audioCtx && audioCtx.close) audioCtx.close().catch(function () {});
+      audioCtx = null; analyser = null;
+    }
+
+    function cleanup() {
+      if (timer) { clearInterval(timer); timer = null; }
+      stopMeter();
+      if (stream) { stream.getTracks().forEach(function (t) { t.stop(); }); stream = null; }
+      mr = null;
+    }
+
+    function startMeter(s) {
+      try {
+        var Ctx = window.AudioContext || window.webkitAudioContext;
+        if (!Ctx) return;
+        audioCtx = new Ctx();
+        var src = audioCtx.createMediaStreamSource(s);
+        analyser = audioCtx.createAnalyser();
+        analyser.fftSize = 512;
+        src.connect(analyser);
+        var buf = new Uint8Array(analyser.frequencyBinCount);
+        var tick = function () {
+          if (!analyser) return;
+          analyser.getByteTimeDomainData(buf);
+          var sum = 0;
+          for (var i = 0; i < buf.length; i++) { var v = (buf[i] - 128) / 128; sum += v * v; }
+          var level = Math.min(1, Math.sqrt(sum / buf.length) * 3.2);
+          if (hooks.onLevel) hooks.onLevel(level);
+          raf = window.requestAnimationFrame(tick);
+        };
+        tick();
+      } catch (e) { /* 电平表只是附加，失败不影响录音 */ }
+    }
+
+    function pickMime() {
+      var list = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4", "audio/ogg;codecs=opus"];
+      for (var i = 0; i < list.length; i++) {
+        if (window.MediaRecorder.isTypeSupported && window.MediaRecorder.isTypeSupported(list[i])) return list[i];
+      }
+      return "";
+    }
+
+    function start() {
+      if (!supported) return Promise.reject(new Error("当前浏览器不支持录音"));
+      if (mr) return Promise.resolve(false);
+      return navigator.mediaDevices.getUserMedia({ audio: true }).then(function (s) {
+        stream = s;
+        var mime = pickMime();
+        mr = mime ? new window.MediaRecorder(s, { mimeType: mime }) : new window.MediaRecorder(s);
+        chunks = [];
+        mr.ondataavailable = function (e) { if (e.data && e.data.size) chunks.push(e.data); };
+        mr.start(1000);
+        startedAt = now(); pausedMs = 0; pauseAt = 0;
+        if (timer) clearInterval(timer);
+        timer = setInterval(function () { if (hooks.onTick) hooks.onTick(elapsed()); }, 200);
+        startMeter(s);
+        if (hooks.onState) hooks.onState("recording");
+        return true;
+      });
+    }
+
+    function pause() {
+      if (!mr || mr.state !== "recording") return false;
+      mr.pause();
+      pauseAt = now();
+      if (hooks.onState) hooks.onState("paused");
+      return true;
+    }
+
+    function resume() {
+      if (!mr || mr.state !== "paused") return false;
+      mr.resume();
+      pausedMs += now() - pauseAt;
+      pauseAt = 0;
+      if (hooks.onState) hooks.onState("recording");
+      return true;
+    }
+
+    function stop() {
+      return new Promise(function (resolve) {
+        if (!mr) return resolve(null);
+        var duration = elapsed();
+        var mime = mr.mimeType || "";
+        var finished = mr;
+        mr.onstop = function () {
+          var type = (finished.mimeType || mime || "audio/webm").split(";")[0];
+          var blob = chunks.length ? new Blob(chunks, { type: type }) : null;
+          cleanup();
+          if (hooks.onState) hooks.onState("stopped");
+          if (hooks.onTick) hooks.onTick(duration);
+          resolve(blob ? { blob: blob, type: type, duration: duration } : null);
+        };
+        try { finished.stop(); } catch (e) { cleanup(); resolve(null); }
+      });
+    }
+
+    return {
+      supported: supported,
+      start: start,
+      pause: pause,
+      resume: resume,
+      stop: stop,
+      elapsed: elapsed,
+      isRecording: function () { return !!mr && mr.state === "recording"; },
+      isPaused: function () { return !!mr && mr.state === "paused"; }
+    };
+  }
+
+  /* ---------------- 页面挂载 ---------------- */
+
+  function mount(opts) {
+    opts = opts || {};
+    var $ = function (id) { return document.getElementById(id); };
+    var el = {
+      title: $("rec-title"), start: $("rec-start"), pause: $("rec-pause"), stop: $("rec-stop"),
+      time: $("rec-time"), meter: $("rec-meter"), note: $("rec-note"),
+      speaker: $("rec-speaker"), line: $("rec-line"), say: $("rec-say"),
+      mark: $("rec-mark"), markNote: $("rec-mark-note"),
+      preview: $("rec-preview"), status: $("rec-status"),
+      send: $("rec-send"), save: $("rec-save"), dlTxt: $("rec-dl-txt"), dlAudio: $("rec-dl-audio"),
+      dlZip: $("rec-dl-zip"), list: $("rec-list"), load: $("rec-load"), del: $("rec-del"),
+      clear: $("rec-clear"), unsupported: $("rec-unsupported")
+    };
+    if (!el.preview) return null;      // 页面没这块就安静退出，不影响其它功能
+
+    // 电平条按需生成，页面里只留容器，避免手写一堆空节点
+    if (el.meter && !el.meter.children.length) {
+      var segs = "", n = 0;
+      for (n = 0; n < 20; n++) segs += "<i></i>";
+      el.meter.innerHTML = segs;
+    }
+
+    var store = null;
+    try { store = createStore(idbAdapter("mtr_records", "recs")); } catch (e) { store = createStore(createMemoryAdapter()); }
+
+    var state = { id: newId(), title: "", createdAt: Date.now(), turns: [], duration: 0, audio: null, audioType: "" };
+    var recordingStarted = false;
+
+    var rec = makeRecorder({
+      onTick: function (secs) {
+        if (el.time) el.time.textContent = clock(secs);
+      },
+      onLevel: function (lvl) { paintLevel(lvl); },
+      onState: function (s) {
+        var map = { recording: "录音中", paused: "已暂停", stopped: "已结束" };
+        setStatus(map[s] || "");
+        if (el.start) el.start.disabled = (s === "recording" || s === "paused");
+        if (el.pause) {
+          el.pause.disabled = (s === "stopped");
+          el.pause.textContent = (s === "paused") ? "继续" : "暂停";
+        }
+        if (el.stop) el.stop.disabled = (s === "stopped");
+        document.body.classList.toggle("rec-on", s === "recording");
+        if (s === "stopped") paintLevel(0);
+      }
+    });
+
+    if (!rec.supported) {
+      if (el.unsupported) el.unsupported.hidden = false;
+      if (el.start) el.start.disabled = true;
+      if (el.pause) el.pause.disabled = true;
+      if (el.stop) el.stop.disabled = true;
+    }
+
+    function setStatus(text) {
+      if (el.status) el.status.textContent = text || "";
+    }
+
+    function paintLevel(lvl) {
+      if (!el.meter) return;
+      var segs = el.meter.children;
+      var on = Math.round((lvl || 0) * segs.length);
+      for (var i = 0; i < segs.length; i++) {
+        segs[i].className = (i < on) ? (i > segs.length - 4 ? "hi" : "on") : "";
+      }
+    }
+
+    function defaultTitle() {
+      var d = new Date();
+      return "会议记录 " + two(d.getMonth() + 1) + "-" + two(d.getDate()) + " " + two(d.getHours()) + two(d.getMinutes());
+    }
+
+    function title() {
+      var t = el.title && el.title.value.trim();
+      return t || defaultTitle();
+    }
+
+    function speaker() {
+      var s = el.speaker && el.speaker.value.trim();
+      return s ? s.replace(/[：:]/g, "") : "";
+    }
+
+    function refreshSpeakers() {
+      var names = collectNames(state.turns);
+      if (!el.speaker) return;
+      var dl = $("rec-speakers");
+      if (dl) {
+        dl.innerHTML = names.map(function (n) { return '<option value="' + esc(n) + '"></option>'; }).join("");
+      }
+    }
+
+    function esc(s) {
+      return String(s == null ? "" : s).replace(/[&<>"]/g, function (c) {
+        return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c];
+      });
+    }
+
+    function append(turn) {
+      if (!turn) return;
+      state.turns.push(turn);
+      if (el.preview) el.preview.value = appendLine(el.preview.value, state.turns, turn);
+      refreshSpeakers();
+    }
+
+    function currentAt() {
+      return recordingStarted ? rec.elapsed() : null;
+    }
+
+    function submitLine() {
+      if (!el.line) return;
+      var text = oneLine(el.line.value);
+      if (!text) { el.line.focus(); return; }
+      var at = currentAt();
+      append({ at: at == null ? state.duration : at, speaker: speaker(), text: text });
+      el.line.value = "";
+      el.line.focus();
+      setStatus("记下 1 条（共 " + state.turns.filter(function (t) { return !t.mark; }).length + " 条）");
+    }
+
+    if (el.start) el.start.addEventListener("click", function () {
+      el.start.disabled = true;
+      rec.start().then(function () {
+        recordingStarted = true;
+        if (!state.title) state.title = title();
+        setStatus("录音中——录音只在本机，结束后点「保存原稿」才会落档");
+      }).catch(function (err) {
+        el.start.disabled = false;
+        setStatus("无法开始录音：" + (err && err.message ? err.message : "浏览器未授权麦克风") +
+          "。可以只用下面的文字录入，功能不受影响。");
+      });
+    });
+
+    if (el.pause) el.pause.addEventListener("click", function () {
+      if (rec.isPaused()) rec.resume(); else rec.pause();
+    });
+
+    if (el.stop) el.stop.addEventListener("click", function () {
+      rec.stop().then(function (out) {
+        if (!out) return;
+        state.duration = out.duration || state.duration;
+        state.audio = out.blob;
+        state.audioType = out.type;
+        setStatus("录音结束：" + clock(state.duration) + "，音频已就绪（点「下载录音」或「保存原稿」留档）");
+      });
+    });
+
+    if (el.say) el.say.addEventListener("click", submitLine);
+    if (el.line) el.line.addEventListener("keydown", function (e) {
+      if (e.key === "Enter" && !e.shiftKey && !e.ctrlKey && !e.metaKey) {
+        e.preventDefault();
+        submitLine();
+      }
+    });
+    if (el.speaker) el.speaker.addEventListener("keydown", function (e) {
+      if (e.key === "Enter") { e.preventDefault(); if (el.line) el.line.focus(); }
+    });
+
+    if (el.mark) el.mark.addEventListener("click", function () {
+      var note = el.markNote ? el.markNote.value.trim() : "";
+      var at = currentAt();
+      append({ at: at == null ? state.duration : at, mark: note || "打点" });
+      if (el.markNote) el.markNote.value = "";
+      setStatus("已打点" + (note ? "：" + note : ""));
+    });
+
+    function download(name, data, mime) {
+      var blob = data instanceof Blob ? data : new Blob([data], { type: mime || "text/plain;charset=utf-8" });
+      var a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = name;
+      document.body.appendChild(a);
+      a.click();
+      setTimeout(function () { URL.revokeObjectURL(a.href); a.remove(); }, 0);
+    }
+
+    function snapshot() {
+      return {
+        id: state.id,
+        title: title(),
+        createdAt: state.createdAt,
+        duration: state.duration,
+        turns: state.turns.slice(),
+        audio: state.audio,
+        audioType: state.audioType,
+        text: el.preview ? el.preview.value : buildScript(state.turns)
+      };
+    }
+
+    if (el.send) el.send.addEventListener("click", function () {
+      var text = el.preview ? el.preview.value : buildScript(state.turns);
+      if (!text.trim()) { setStatus("还没有内容可送"); return; }
+      var tr = opts.transcriptEl || $("tr-input");
+      if (tr) {
+        tr.value = text;
+        tr.dispatchEvent(new Event("input", { bubbles: true }));
+      }
+      var run = $("run");
+      if (run) run.click();
+      setStatus("已送入「会议转录」并跑了质检；录音与文字原稿点「保存原稿」可留档");
+    });
+
+    if (el.save) el.save.addEventListener("click", function () {
+      var s = snapshot();
+      state.title = s.title;
+      store.save({
+        id: s.id, title: s.title, createdAt: s.createdAt, savedAt: Date.now(),
+        duration: s.duration, turns: s.turns, text: s.text,
+        audio: s.audio, audioType: s.audioType
+      }).then(function () {
+        setStatus("原稿已存到本机（" + (s.audio ? "文字 + 录音" : "仅文字") + "），可在下方列表载入");
+        return refreshList();
+      }).catch(function (err) {
+        setStatus("存档失败：" + (err && err.message ? err.message : "浏览器拒绝写入"));
+      });
+    });
+
+    if (el.dlTxt) el.dlTxt.addEventListener("click", function () {
+      download("原稿_" + fileStamp(state.createdAt) + ".txt", buildBackup(snapshot()), "text/plain;charset=utf-8");
+    });
+
+    if (el.dlAudio) el.dlAudio.addEventListener("click", function () {
+      if (!state.audio) { setStatus("还没有录音可下载——先点「开始录音」"); return; }
+      var ext = state.audioType.indexOf("mp4") >= 0 ? "m4a" : "webm";
+      download("录音_" + fileStamp(state.createdAt) + "." + ext, state.audio, state.audioType);
+    });
+
+    if (el.dlZip) el.dlZip.addEventListener("click", function () {
+      var s = snapshot();
+      var files = [
+        { name: "原稿.txt", data: buildBackup(s) },
+        { name: "meta.json", data: buildMeta(s) }
+      ];
+      if (s.audio) files.push({ name: "录音." + (s.audioType.indexOf("mp4") >= 0 ? "m4a" : "webm"), data: s.audio });
+      var bytes = zip(files, s.createdAt);
+      download("会议原稿_" + fileStamp(s.createdAt) + ".zip", bytes, "application/zip");
+      setStatus("备份包已生成：" + files.length + " 个文件");
+    });
+
+    function refreshList() {
+      if (!el.list) return;
+      return store.list().then(function (rows) {
+        el.list.innerHTML = rows.length
+          ? rows.map(function (r) {
+            return '<option value="' + esc(r.id) + '">' + esc(r.title || "未命名") + " · " +
+              esc(dateText(r.createdAt)) + " · " + clock(r.duration || 0) +
+              (r.audio ? " · 含录音" : "") + "</option>";
+          }).join("")
+          : '<option value="">本机还没有存档</option>';
+        if (el.del) el.del.disabled = !rows.length;
+        if (el.load) el.load.disabled = !rows.length;
+        return rows;
+      }).catch(function () { return []; });
+    }
+
+    if (el.load) el.load.addEventListener("click", function () {
+      var id = el.list && el.list.value;
+      if (!id) { setStatus("先在上面选一份存档"); return; }
+      store.get(id).then(function (r) {
+        if (!r) { setStatus("这份存档读不出来"); return; }
+        state.id = r.id || newId();
+        state.title = r.title || "";
+        state.createdAt = r.createdAt || Date.now();
+        state.duration = r.duration || 0;
+        state.turns = (r.turns || []).slice();
+        state.audio = r.audio || null;
+        state.audioType = r.audioType || "";
+        if (el.title) el.title.value = state.title;
+        if (el.time) el.time.textContent = clock(state.duration);
+        if (el.preview) el.preview.value = r.text || buildScript(state.turns);
+        refreshSpeakers();
+        setStatus("已载入存档：" + (r.title || "未命名") + (state.audio ? "（含录音，可下载）" : ""));
+      });
+    });
+
+    if (el.del) el.del.addEventListener("click", function () {
+      var id = el.list && el.list.value;
+      if (!id) { setStatus("先在上面选一份存档"); return; }
+      store.remove(id).then(function () {
+        setStatus("已删除这份存档（只删本机副本）");
+        return refreshList();
+      });
+    });
+
+    if (el.clear) el.clear.addEventListener("click", function () {
+      state = { id: newId(), title: "", createdAt: Date.now(), turns: [], duration: 0, audio: null, audioType: "" };
+      recordingStarted = false;
+      if (el.title) el.title.value = "";
+      if (el.time) el.time.textContent = "00:00";
+      if (el.line) el.line.value = "";
+      if (el.speaker) el.speaker.value = "";
+      if (el.markNote) el.markNote.value = "";
+      if (el.preview) el.preview.value = "";
+      setStatus("已清空当前记录");
+      refreshSpeakers();
+    });
+
+    // 首次进来：给一个占位会议名，并把存档列表拉出来
+    if (el.title && !el.title.value) el.title.placeholder = defaultTitle();
+    refreshList();
+    paintLevel(0);
+
+    return {
+      state: function () { return state; },
+      append: append,
+      submitLine: submitLine,
+      script: function () { return buildScript(state.turns); }
+    };
+  }
+
+  return {
+    VERSION: VERSION,
+    stamp: stamp,
+    clock: clock,
+    oneLine: oneLine,
+    collectNames: collectNames,
+    namesLine: namesLine,
+    buildScript: buildScript,
+    appendLine: appendLine,
+    buildBackup: buildBackup,
+    buildMeta: buildMeta,
+    crc32: crc32,
+    zip: zip,
+    createMemoryAdapter: createMemoryAdapter,
+    createStore: createStore,
+    newId: newId,
+    mount: mount
+  };
+})();
+
+if (typeof module !== "undefined" && module.exports) module.exports = RECORDER;
+</script>
+<script>
+  if (window.RECORDER) RECORDER.mount({});
 </script>
 
 <script>
@@ -542,16 +1593,25 @@ const QC = (function(){
   }
 
   // 三态：命中 / 不匹配 / 不可检
+  // v1.3：录音识别稿先去掉时间码/说话人前缀/识别占位与标点，避免把格式差异判成不可追溯
   function checkQuotes(rows, raw, opts){
     opts = opts || {};
-    const body = opts.normalize === false ? String(raw || "") : squeeze(raw);
+    const asr = (typeof A_CHANNEL !== "undefined" && A_CHANNEL.detectAsr)
+      ? A_CHANNEL.detectAsr(raw) : {is_asr: false};
+    const asrNorm = opts.normalize !== false && asr.is_asr;
+    const base = asrNorm && A_CHANNEL.asrNormalize ? A_CHANNEL.asrNormalize(raw) : String(raw || "");
+    const body = opts.normalize === false ? String(raw || "") : squeeze(base);
+    const stripAsr = s => asrNorm
+      ? s.replace(/[。！？；，、：,.!?;:]/g, "")
+          .replace(/[\[\(（【]\s*(听不清|听不见|无法识别|噪声|噪音|音乐|笑声|掌声|沉默|静音|重叠)\s*[\]\)）】]/g, "")
+      : s;
     return rows.map(r => {
       const quote = String(r["原文依据"] || "").trim();
       const parts = quote.split(/[｜＋+]/).map(p => p.trim()).filter(Boolean);
-      if (!parts.length) return {编号: r["编号"], quote: quote, hit: false, checkable: false};
+      if (!parts.length) return {编号: r["编号"], quote: quote, hit: false, checkable: false, asr: asrNorm};
       const norm = s => opts.normalize === false ? String(s) : squeeze(s);
-      const ok = parts.every(p => body.includes(norm(p.replace(/^[“”"]+|[“”"]+$/g, ""))));
-      return {编号: r["编号"], quote: quote, hit: ok, checkable: true};
+      const ok = parts.every(p => body.includes(norm(stripAsr(p.replace(/^[“”"]+|[“”"]+$/g, "")))));
+      return {编号: r["编号"], quote: quote, hit: ok, checkable: true, asr: asrNorm};
     });
   }
 
@@ -563,6 +1623,17 @@ const QC = (function(){
     if (raw.trim() && !hasNames) issues.push({level: "warn", text: "没读到「参会人：」行。", fix: "按人切片查遗漏需要这份名单；缺了 A 通道不可用，D 与 C 仍可跑。"});
     if (raw.trim() && hasNames && speakerLines === 0) issues.push({level: "block", text: "读到了参会人，但一句「姓名：内容」都没切出来。", fix: "检查每行是不是「姓名：」开头，姓名要与名单一致（甲/乙/丙/丁也支持）。"});
     if (raw.trim() && !hasNames && speakerLines === 0 && raw.length > 60) issues.push({level: "block", text: "这段文字看着像会议纪要正文，不像逐字转写稿。", fix: "纪要正文是概括过的，依据回查会全不匹配——不要用它跑 D。"});
+    const asrInfo = (typeof A_CHANNEL !== "undefined" && A_CHANNEL.detectAsr) ? A_CHANNEL.detectAsr(raw) : null;
+    if (asrInfo && asrInfo.is_asr){
+      const formCn = {"timestamp+speaker": "时间码+说话人", "speaker": "仅说话人标记",
+                      "timestamp": "仅时间码", "plain": "纯文本"}[asrInfo.form] || asrInfo.form;
+      const verdictCn = {"usable": "可检", "degraded": "降级可检", "unusable": "不可检"}[asrInfo.verdict] || asrInfo.verdict;
+      issues.push({level: "info",
+        text: "识别为录音转写稿（" + formCn + "，" + asrInfo.lines + " 行：时间码 " + asrInfo.ts_lines +
+              " 行、说话人 " + asrInfo.speaker_lines + " 行、识别占位 " + asrInfo.placeholder + " 处）。",
+        fix: "比对前去掉时间码、说话人前缀、识别占位与标点；结论「" + verdictCn + "」。" +
+             (asrInfo.notes.length ? asrInfo.notes.join("；") : "")});
+    }
     if (!rows.length) issues.push({level: "block", text: "待办表没读出任务行。", fix: "表头要有「任务」列；六列顺序不限。"});
     const withQuote = rows.filter(r => String(r["原文依据"] || "").trim()).length;
     if (rows.length && !withQuote) issues.push({level: "block", text: "待办表没有「原文依据」，或这一列全为空。", fix: "补上依据列，否则 D 只能标「不可检」；也可点「载入样例」看标准格式。"});
@@ -570,7 +1641,7 @@ const QC = (function(){
     const noDueCol = rows.length && rows.every(r => !String(r["截止时间"] || "").trim());
     if (noOwnerCol) issues.push({level: "warn", text: "「负责人」列全空。", fix: "C 与分档会把这些全判为待人工判断，不是数据结论。"});
     if (noDueCol) issues.push({level: "warn", text: "「截止时间」列全空。", fix: "同上：先确认是不是列名为「时限/截止」被漏识别。"});
-    return {issues: issues, hasNames: hasNames, withQuote: withQuote};
+    return {issues: issues, hasNames: hasNames, withQuote: withQuote, asr: asrInfo};
   }
 
   function parseOwners(cell, names){
@@ -686,11 +1757,20 @@ const QC = (function(){
     let L = [];
     const bad = hitBad(ctx);
     L.push("# 会议待办质检报告\n\n");
-    L.push("输入：参会人 " + (ctx.names || []).length + " 人｜待办 " + ctx.rows.length + " 条\n\n");
+    const asrR = ctx.preflight && ctx.preflight.asr;
+    L.push("输入：参会人 " + (ctx.names || []).length + " 人｜待办 " + ctx.rows.length + " 条" +
+           (asrR && asrR.is_asr ? "｜**录音转写稿**（" + ({"timestamp+speaker": "时间码+说话人", "speaker": "仅说话人标记", "timestamp": "仅时间码", "plain": "纯文本"}[asrR.form] || asrR.form) + "）" : "") + "\n\n");
     L.push("## 一、结论\n\n");
     const iss = ctx.preflight.issues || [];
     L.push("- 输入体检：" + (iss.length ? "**" + iss.length + " 项提示**（见下）" : "通过") + "\n");
-    iss.forEach(x => L.push("  - [" + (x.level === "block" ? "阻断" : "提示") + "] " + x.text + " " + x.fix + "\n"));
+    const tagOf = lv => ({"block": "阻断", "info": "信息"}[lv] || "提示");
+    iss.forEach(x => L.push("  - [" + tagOf(x.level) + "] " + x.text + " " + x.fix + "\n"));
+    if (asrR && asrR.is_asr){
+      L.push("- 转写形态：**" + ({"timestamp+speaker": "时间码+说话人", "speaker": "仅说话人标记", "timestamp": "仅时间码", "plain": "纯文本"}[asrR.form] || asrR.form) +
+             "**｜时间码 " + Math.round(asrR.ts_ratio * 100) + "%｜说话人 " + Math.round(asrR.speaker_ratio * 100) +
+             "%｜无标点长句 " + asrR.punctless_long + " 行｜识别占位 " + asrR.placeholder + " 处｜结论：**" +
+             ({"usable": "可检", "degraded": "降级可检", "unusable": "不可检"}[asrR.verdict] || asrR.verdict) + "**\n");
+    }
     L.push("- 依据回查：**" + ctx.hit + "/" + ctx.checkable + " 命中**" +
            (ctx.uncheckable ? "（另 " + ctx.uncheckable + " 条不可检，不计入分母）" : "") +
            (bad.length ? "，不匹配 " + bad.length + " 条：" + bad.map(h => "#" + h["编号"]).join("、") : "") + "\n");
@@ -793,10 +1873,25 @@ function render(ctx){
   const bad = ctx.quotes.filter(q => q.checkable && !q.hit);
   let h = "";
 
+  // 系统判定：让使用者看到“它自己认成了什么、用了什么口径”，而不是自己去猜
+  if (ctx.classify && ctx.classify.tr){
+    const KIND = {transcript: "会议转录", todo: "待办表", unknown: "没能认出", empty: "空材料"};
+    const tr = ctx.classify.tr, td = ctx.classify.todo || {};
+    const form = (tr.asr && tr.asr.is_asr) ? "录音转写稿" : "人工整理稿";
+    h += '<div class="classify"><b>系统判定</b>：材料一 = <span class="k">' + (KIND[tr.kind] || tr.kind) +
+         "</span>（" + form + "）｜材料二 = <span class=\"k\">" + (KIND[td.kind] || td.kind) +
+         "</span>｜采用口径：<span class=\"k\">" +
+         (ctx.normalize ? "自动适配（去空白 + 转写稿去噪）" : "严格逐字（对照用）") + "</span>";
+    if (tr.kind === "unknown" || td.kind === "unknown"){
+      h += "｜<b>有一份材料没认出来</b>：若放错了框，把两份互换位置再跑一次即可。";
+    }
+    h += "</div>";
+  }
+
   const iss = (ctx.preflight && ctx.preflight.issues) || [];
   if (iss.length){
     h += '<div class="preflight"><h3>输入体检：' + iss.length + " 项" + '</h3><ul>';
-    iss.forEach(x => { h += '<li><b>' + (x.level === "block" ? "阻断" : "提示") + '</b> ' + esc(x.text) + ' <span class="fix">' + esc(x.fix) + '</span></li>'; });
+    iss.forEach(x => { h += '<li><b>' + ({"block": "阻断", "info": "信息"}[x.level] || "提示") + '</b> ' + esc(x.text) + ' <span class="fix">' + esc(x.fix) + '</span></li>'; });
     h += "</ul></div>";
   }
 
@@ -868,11 +1963,22 @@ function render(ctx){
 function collect(){
   const raw = $("tr-input").value.trim();
   const todo = $("todo-input").value.trim();
-  if (!raw){ $("status").textContent = "先粘贴转录。"; return null; }
-  if (!todo){ $("status").textContent = "先粘贴待办表（六列）。"; return null; }
+  if (!raw || !todo){
+    const miss = !raw ? "会议转录" : "待办表（六列）";
+    $("status").textContent = "还差一份" + miss + "：把它粘进最上面的「把材料丢进来就行」，或直接拖进来，会自动分拣。";
+    return null;
+  }
   const rows = QC.parseRows(todo);
   if (!rows.length){ $("status").textContent = "待办表读不出任务列，检查表头是否为 编号,任务,负责人,截止时间,约束,原文依据。"; return null; }
-  return QC.run(raw, todo, {ignoreSpace: $("ignore-space").checked});
+  const ctx = QC.run(raw, todo, {ignoreSpace: $("ignore-space").checked});
+  try {
+    ctx.classify = {
+      tr: A_CHANNEL.classifyMaterial(raw),
+      todo: A_CHANNEL.classifyMaterial(todo),
+      auto: !!$("ignore-space").checked
+    };
+  } catch (e) { ctx.classify = null; }
+  return ctx;
 }
 
 $("run").addEventListener("click", () => {
@@ -902,6 +2008,80 @@ $("file-input").addEventListener("change", e => {
   const r = new FileReader();
   r.onload = () => { $("todo-input").value = String(r.result || "").replace(/^\ufeff/, ""); $("status").textContent = "已导入 " + f.name; };
   r.readAsText(f, "utf-8");
+});
+
+// ---------- 一键导入：按内容分拣，而不是让人先选框 ----------
+function readFile(f){
+  return new Promise(res => {
+    const r = new FileReader();
+    r.onload = () => res(String(r.result || "").replace(/^\ufeff/, ""));
+    r.onerror = () => res("");
+    r.readAsText(f, "utf-8");
+  });
+}
+
+function routeText(text, name){
+  const t = String(text == null ? "" : text);
+  if (!t.trim()) return null;
+  const c = A_CHANNEL.classifyMaterial(t);
+  const trEl = $("tr-input"), todoEl = $("todo-input");
+  if (c.kind === "todo") todoEl.value = t;
+  else if (c.kind === "transcript") trEl.value = t;
+  else if (!trEl.value.trim()) trEl.value = t;      // 认不出：优先填空着的框
+  else if (!todoEl.value.trim()) todoEl.value = t;
+  else todoEl.value = t;
+  return {kind: c.kind, name: name || "粘贴内容", asr: !!(c.asr && c.asr.is_asr)};
+}
+
+const KIND_CN = {transcript: "转录", todo: "待办表", unknown: "未认出", empty: "空"};
+
+function importMany(items){
+  const placed = (items || []).map(it => routeText(it.text, it.name)).filter(Boolean);
+  const st = $("import-status");
+  if (!placed.length){ if (st) st.textContent = "没有读到内容"; return; }
+  if (st){
+    st.textContent = "已分拣 " + placed.length + " 份：" + placed.map(p =>
+      p.name + " → " + (KIND_CN[p.kind] || p.kind) + (p.asr ? "（录音转写稿）" : "")).join("；");
+  }
+  if ($("tr-input").value.trim() && $("todo-input").value.trim()) $("run").click();
+}
+
+$("import-run").addEventListener("click", () => {
+  const t = $("import-input").value;
+  const parts = String(t || "").split(/\n{3,}/).filter(s => s.trim());
+  importMany(parts.length > 1
+    ? parts.map((s, i) => ({name: "第 " + (i + 1) + " 段", text: s}))
+    : [{name: "粘贴内容", text: t}]);
+  $("import-input").value = "";
+});
+
+$("import-file").addEventListener("click", () => $("import-files").click());
+$("import-files").addEventListener("change", async e => {
+  const fs = Array.from((e.target && e.target.files) || []);
+  const items = [];
+  for (const f of fs) items.push({name: f.name, text: await readFile(f)});
+  importMany(items);
+  if (e.target) e.target.value = "";
+});
+
+$("tr-file-btn").addEventListener("click", () => $("tr-file").click());
+$("tr-file").addEventListener("change", async e => {
+  const f = e.target && e.target.files && e.target.files[0];
+  if (f){ $("tr-input").value = await readFile(f); $("status").textContent = "已导入 " + f.name; }
+  if (e.target) e.target.value = "";
+});
+
+// 拖到页面任意位置都收：不用先想“这该放哪个框”
+["dragenter", "dragover"].forEach(ev => document.addEventListener(ev, e => {
+  if (e.dataTransfer && Array.from(e.dataTransfer.types || []).indexOf("Files") >= 0) e.preventDefault();
+}));
+document.addEventListener("drop", async e => {
+  const fs = Array.from((e.dataTransfer && e.dataTransfer.files) || []);
+  if (!fs.length) return;
+  e.preventDefault();
+  const items = [];
+  for (const f of fs) items.push({name: f.name, text: await readFile(f)});
+  importMany(items);
 });
 
 function download(name, text, mime){

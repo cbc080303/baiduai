@@ -27,12 +27,17 @@ const sandbox = {
 vm.createContext(sandbox);
 
 const blocks = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map((m) => m[1]);
-if (blocks.length !== 2) {
-  console.error("期望 2 个内联 script（A 通道 / 引擎+界面），实际", blocks.length);
+if (blocks.length !== 4) {
+  console.error("期望 4 个内联 script（A 通道 / 记录器 / 挂载调用 / 引擎+界面），实际", blocks.length);
   process.exit(2);
 }
+if (!blocks[2].includes("RECORDER.mount")) {
+  console.error("第 3 个 script 应是记录器挂载调用");
+  process.exit(2);
+}
+// 挂载块依赖真实 DOM，离线测试跳过；其余三块必须能独立执行
 try {
-  blocks.forEach((b, i) => vm.runInContext(b, sandbox, { filename: "block" + i + ".js" }));
+  [0, 1, 3].forEach((i) => vm.runInContext(blocks[i], sandbox, { filename: "block" + i + ".js" }));
 } catch (e) {
   console.error("内联脚本执行失败：", e.message);
   process.exit(2);
