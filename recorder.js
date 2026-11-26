@@ -4,11 +4,12 @@
  * 文字成稿一键进入质检功能区，不用手工转格式。
  *
  * 三条硬边界（写死在这里，页面文案与测试都要对得上）：
- *   1. 不做语音识别。浏览器拿不到文字，录音只作原稿留档；文字由人边听边记，
- *      或由平台侧（会议 MCP）转写后再贴进来。
- *   2. 不联网。录音、存档、打包全在本机内存与 IndexedDB 内完成，无任何请求。
- *   3. 只改格式，不改内容。生成的时间码与说话人前缀取自录入时的真实时刻与人名，
- *      不补词、不纠错。
+ *   1. 录音本身不做语音识别；识别是**可选项**（asr.js）：默认只走 `processLocally`
+ *      端上识别，音频不出本机；只有用户显式把「识别方式」改成云端时才联网。
+ *      识别不区分说话人——浏览器端没有声纹分离，换人由人点一下。
+ *   2. 质检、存档、打包不联网：录音、文字、存档与本页 zip 都在本机完成。
+ *   3. 只改格式，不改内容。时间码与说话人前缀取自录入时的真实时刻与人名，
+ *      识别结果照录，不补词、不纠错。
  *
  * 与质检端的契约：成稿第一行是「参会人：A、B」，其后每行「[mm:ss] 说话人：内容」。
  * 这正好是 qc_tools.parse_transcript 与 a_channel.scan 都能消费的形态（人工稿）；
@@ -170,7 +171,7 @@ var RECORDER = (function () {
       "# 时长：" + clock(rec.duration || 0),
       "# 说话人：" + (names.length ? names.join("、") : DEFAULT_SPEAKER),
       "# 记录方式：" + (rec.audio ? "录音 + 速记（录音随包留档）" : "纯文字录入"),
-      "# 说明：本文件是原稿备份，时间码与说话人前缀照录入原样保留；不做语音识别，不补词不改字。"
+      "# 说明：本文件是原稿备份，时间码与说话人前缀照录入原样保留；识别结果照录，不补词、不改字。"
     ];
     var body = [];
     turns.forEach(function (t) {
@@ -529,7 +530,9 @@ var RECORDER = (function () {
       preview: $("rec-preview"), status: $("rec-status"),
       send: $("rec-send"), save: $("rec-save"), dlTxt: $("rec-dl-txt"), dlAudio: $("rec-dl-audio"),
       dlZip: $("rec-dl-zip"), list: $("rec-list"), load: $("rec-load"), del: $("rec-del"),
-      clear: $("rec-clear"), clearAll: $("rec-clear-all"), floatBtn: $("rec-float"), unsupported: $("rec-unsupported")
+      clear: $("rec-clear"), clearAll: $("rec-clear-all"), floatBtn: $("rec-float"), unsupported: $("rec-unsupported"),
+      asrBtn: $("rec-asr"), asrLang: $("rec-asr-lang"), asrMode: $("rec-asr-mode"),
+      asrState: $("rec-asr-state"), switchBox: $("rec-switch")
     };
     if (!el.preview) return null;      // 页面没这块就安静退出，不影响其它功能
 
@@ -608,6 +611,7 @@ var RECORDER = (function () {
     }
 
     function refreshSpeakers() {
+      renderSwitch();
       var names = collectNames(state.turns);
       if (!el.speaker) return;
       var dl = $("rec-speakers");
@@ -761,7 +765,7 @@ var RECORDER = (function () {
           '<textarea id="rf-line" placeholder="记一条，回车提交；Shift+回车换行"></textarea>' +
           '<div class="rf-row"><button type="button" id="rf-say">记一条</button>' +
           '<button type="button" id="rf-mark">打点</button></div>' +
-          '<p id="rf-tip">录音和文字只在本机；成稿仍在上面的页面里</p>';
+          '<p id="rf-tip">录音和文字只在本机；云端识别时音频会发给浏览器厂商。成稿仍在上面的页面里</p>';
         var say = q("#rf-say"), line = q("#rf-line"), mk = q("#rf-mark"), close = q("#rf-close");
         if (say) say.addEventListener("click", function () { sayFromPanel(); });
         if (mk) mk.addEventListener("click", function () { markNow(""); });
@@ -836,6 +840,108 @@ var RECORDER = (function () {
       }
       floatCtl.open();
     });
+
+    /* ---------------- 语音识别：文字自动，换人一键 ---------------- */
+
+    // 浏览器只出文字，不区分说话人（没有声纹分离）；换人由人点一下，之后落行归到新名字。
+    var asrCtl = null, asrOn = false;
+
+    function asrSay(text) { if (el.asrState) el.asrState.textContent = text || ""; }
+
+    function asrLabel(on) {
+      if (!el.asrBtn) return;
+      el.asrBtn.textContent = on ? "停止识别" : "语音识别";
+      el.asrBtn.setAttribute("aria-pressed", on ? "true" : "false");
+    }
+
+    function renderSwitch() {
+      if (!el.switchBox) return;
+      var cur = speaker();
+      var names = collectNames(state.turns).filter(function (n) { return n && n !== DEFAULT_SPEAKER; });
+      var html = names.slice(0, 8).map(function (n) {
+        return '<button type="button" data-name="' + esc(n) + '"' + (n === cur ? ' class="on"' : "") + ">" + esc(n) + "</button>";
+      }).join("");
+      html += '<button type="button" data-name=""' + (cur ? "" : ' class="on"') + ">未标注</button>";
+      el.switchBox.innerHTML = html;
+    }
+
+    if (el.switchBox) el.switchBox.addEventListener("click", function (e) {
+      var node = e.target, b = null;
+      while (node && node !== el.switchBox) {
+        if (node.getAttribute && node.getAttribute("data-name") !== null) { b = node; break; }
+        node = node.parentNode;
+      }
+      if (!b) return;
+      var name = b.getAttribute("data-name") || "";
+      if (el.speaker) el.speaker.value = name;
+      renderSwitch();
+      asrSay(name ? ("已换成 " + name + "：接下来识别到的话记到他名下") : "已换成「未标注」");
+    });
+
+    function ensureAsr() {
+      if (asrCtl || typeof ASR === "undefined") return asrCtl;
+      asrCtl = ASR.create({
+        lang: el.asrLang ? el.asrLang.value : ASR.DEFAULT_LANG,
+        local: !el.asrMode || el.asrMode.value !== "remote",
+        idleMs: 1400,
+        onText: function (r) { if (r && r.interim) asrSay("听到：" + r.interim); },
+        onSegment: function (text) {
+          var who = speaker() || DEFAULT_SPEAKER;
+          if (submitText(text, who)) {
+            asrSay("落一行（" + who + "），共 " + state.turns.filter(function (t) { return !t.mark; }).length + " 条");
+          }
+        },
+        onError: function (msg) { asrSay(msg); },
+        onState: function (s) {
+          asrOn = (s === "listening-local" || s === "listening-remote");
+          asrLabel(asrOn);
+          if (s === "listening-local") asrSay("识别中（端上：音频不出本机）");
+          else if (s === "listening-remote") asrSay("识别中（云端：音频会发给浏览器厂商）");
+          else if (s === "stopped") asrSay("识别已停");
+        }
+      });
+      return asrCtl;
+    }
+
+    // 端上语言包必须在用户手势里安装：这次点击本身就是手势，顺着点完就装
+    function startAsr(a) {
+      a.setLang(el.asrLang ? el.asrLang.value : ASR.DEFAULT_LANG);
+      a.setLocal(!el.asrMode || el.asrMode.value !== "remote");
+      a.open().then(function (r) {
+        if (r === "running") return;
+        if (r === "need-install") {
+          asrSay("端上语言包还没下载，正在安装（一次性联网下载，之后可离线识别）…");
+          a.installLocal().then(function (ok) {
+            if (ok) { asrSay("语言包装好了，开始识别…"); return a.start(); }
+            asrSay("语言包没装上：可把「识别方式」改为云端识别，或直接用平台转写。");
+          });
+          return;
+        }
+        if (r === "need-choice") {
+          asrSay("这个浏览器没有端上识别（Chrome 139+ / Firefox 160+ 才有）。把「识别方式」改成云端识别（音频会发给浏览器厂商），或直接用平台转写。");
+          return;
+        }
+        asrSay("识别没能启动：" + r + "；文字录入不受影响。");
+      });
+    }
+
+    if (el.asrBtn) el.asrBtn.addEventListener("click", function () {
+      if (typeof ASR === "undefined") { asrSay("识别模块没加载"); return; }
+      var a = ensureAsr();
+      if (!a) return;
+      if (!a.supported()) {
+        asrSay("这个浏览器没有语音识别接口（Chrome / Edge 可用；Safari 与 Chrome 安卓版没有）。文字录入不受影响。");
+        return;
+      }
+      if (asrOn) { a.stop(); return; }
+      startAsr(a);
+    });
+
+    if (el.asrMode) el.asrMode.addEventListener("change", function () {
+      if (asrOn) asrSay("切换识别方式要先把识别停掉再开");
+    });
+
+    renderSwitch();
 
     function download(name, data, mime) {
       var blob = data instanceof Blob ? data : new Blob([data], { type: mime || "text/plain;charset=utf-8" });

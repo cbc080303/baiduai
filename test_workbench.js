@@ -27,21 +27,21 @@ const sandbox = {
 vm.createContext(sandbox);
 
 const blocks = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map((m) => m[1]);
-if (blocks.length !== 6) {
-  console.error("期望 6 个内联 script（A 通道 / 记录器 / 字幕 / 素材 / 挂载调用 / 引擎+界面），实际", blocks.length);
+if (blocks.length !== 7) {
+  console.error("期望 7 个内联 script（A 通道 / 记录器 / 字幕 / 素材 / 识别 / 挂载调用 / 引擎+界面），实际", blocks.length);
   process.exit(2);
 }
-if (!blocks[4].includes("RECORDER.mount")) {
-  console.error("第 5 个 script 应是记录器挂载调用");
+if (!blocks[5].includes("RECORDER.mount")) {
+  console.error("第 6 个 script 应是记录器挂载调用");
   process.exit(2);
 }
-if (!blocks[2].includes("var SUBTITLE") || !blocks[3].includes("var MEDIA")) {
-  console.error("第 3/4 个 script 应是字幕解析与材料识别");
+if (!blocks[2].includes("var SUBTITLE") || !blocks[3].includes("var MEDIA") || !blocks[4].includes("var ASR")) {
+  console.error("第 3/4/5 个 script 应是字幕解析、材料识别与语音识别");
   process.exit(2);
 }
-// 挂载块依赖真实 DOM，离线测试跳过；其余五块必须能独立执行
+// 挂载块依赖真实 DOM，离线测试跳过；其余六块必须能独立执行
 try {
-  [0, 1, 2, 3, 5].forEach((i) => vm.runInContext(blocks[i], sandbox, { filename: "block" + i + ".js" }));
+  [0, 1, 2, 3, 4, 6].forEach((i) => vm.runInContext(blocks[i], sandbox, { filename: "block" + i + ".js" }));
 } catch (e) {
   console.error("内联脚本执行失败：", e.message);
   process.exit(2);

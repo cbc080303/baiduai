@@ -64,7 +64,7 @@ ok("备份写会议名", backup.includes("# 会议记录：产品周会"));
 ok("备份写时长", backup.includes("# 时长：62:05"));
 ok("备份保留打点", backup.includes("[00:00:15] ※ 争议点"));
 ok("备份含参会人行", backup.includes("参会人：张岚、王睿"));
-ok("备份不含语音识别声明相反项", backup.includes("不做语音识别"));
+ok("备份说明改为照录而非否认识别", backup.includes("识别结果照录") && !backup.includes("不做语音识别"));
 
 const meta = JSON.parse(R.buildMeta({ title: "产品周会", createdAt: 1, duration: 3725, turns, audio: true, audioType: "audio/webm" }));
 eq("meta turns", meta.turns, 4);
@@ -117,7 +117,7 @@ store.save({ id: "a", title: "早会", createdAt: 100, turns: [turns[0]] })
 
     // ---------- 9 工作台页面结构
     const html = fs.readFileSync(path.join(__dirname, "workbench.html"), "utf8");
-    ["rec-start", "rec-pause", "rec-stop", "rec-float", "rec-say", "rec-mark", "rec-preview",
+    ["rec-start", "rec-pause", "rec-stop", "rec-float", "rec-asr", "rec-asr-lang", "rec-asr-mode", "rec-switch", "rec-say", "rec-mark", "rec-preview",
       "rec-send", "rec-save", "rec-dl-txt", "rec-dl-audio", "rec-dl-zip", "rec-list", "rec-load", "rec-del"]
       .forEach((id) => ok("页面含 #" + id, html.includes('id="' + id + '"')));
     ok("页面挂载记录器", html.includes("RECORDER.mount"));

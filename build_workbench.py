@@ -15,6 +15,7 @@ MODS = [
     ("/*==RECORDER==*/", os.path.join(HERE, "recorder.js")),
     ("/*==SUBTITLE==*/", os.path.join(HERE, "subtitle.js")),
     ("/*==MEDIA==*/", os.path.join(HERE, "media_intake.js")),
+    ("/*==ASR==*/", os.path.join(HERE, "asr.js")),
 ]
 OUT = os.path.join(HERE, "质检工作台.html")
 
@@ -63,6 +64,7 @@ def main():
     print("recorder inlined:", "RECORDER.mount" in out and "/*==RECORDER==*/" not in out)
     print("subtitle inlined:", "SUBTITLE.parse" in out and "/*==SUBTITLE==*/" not in out)
     print("media inlined:", "MEDIA.kindOf" in out and "/*==MEDIA==*/" not in out)
+    print("asr inlined:", "ASR.create" in out and "/*==ASR==*/" not in out)
     return 0
 
 
