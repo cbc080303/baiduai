@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""会议待办质检辅助工具 v1.4
+"""会议待办质检辅助工具 v1.5
 
 设计原则：只做机器能给出硬证据的部分，不假装能判断语义。
 三个通道，分别对应质检的 D / A / B 维度：
@@ -8,6 +8,14 @@
   1) check_quotes   D 维度：原文依据是否在转录中逐字存在（字符串匹配，硬结论）
   2) slice_scan     A 维度：按人切片 + 规则扫描，只输出“候选”，不下“遗漏”结论
   3) soft 标记      B 维度辅助：标出含软要求词的句子，供人工/模型判断
+
+v1.5 修正（输入容错，2026-11-26）：
+  - check_quotes 增加空白归一化（默认开 normalize=True）：从 Word/微信复制的转录常夹
+    全角空格或不换行空格，严格逐字会把整表判成“不匹配”，看起来像工具坏了。
+    归一化只去空白，不放宽到同义词、不改标点。
+  - 依据为空（缺列或空串）不再算“不匹配”，单独标 checkable=False，不进命中率分母。
+  - 既有四组结果经复核零变化：示例 14/14、第 2 组 8/9、第 4 组 9/9 与 10/10。
+  - 调用方拿到 hit 时须同时看 checkable：checkable=False 表示“无法检查”，不是“检查失败”。
 
 v1.4 修正（对照第 4 组 v1.3 的沉默型漏检：同句两动作被覆盖判断吸收）：
   - 覆盖判断改用「任务」列（不含约束列）的动作词做否决：任务含成果类动词
@@ -184,13 +192,27 @@ def persons_in(sent_obj, names):
 # ---------------------------------------------------------------- 通道 1：依据校验
 
 
-def check_quotes(rows, transcript_text):
+def check_quotes(rows, transcript_text, normalize=True):
+    """D 维度：原文依据能否在转录中逐字匹配（三态）。
+
+    normalize=True 时先去掉两边的空白再比对——从文档/聊天窗复制的转录常带
+    全角空格，严格比对会把整表判成“不匹配”，那是输入问题，不是依据问题。
+    checkable=False 表示这条没有依据可查（缺列或空串），它不是“不命中”，
+    调用方不得把它算进命中率分母。
+    """
+    def squeeze(s):
+        return re.sub(r"\s+", "", s) if normalize else s
+
+    body = squeeze(transcript_text or "")
     results = []
     for r in rows:
         quote = (r.get("原文依据") or "").strip()
         parts = [p.strip() for p in re.split(r"[｜|＋+]", quote) if p.strip()]
-        ok = bool(parts) and all(p.strip("“”\"") in transcript_text for p in parts)
-        results.append({"编号": r.get("编号", "?"), "hit": ok, "quote": quote})
+        if not parts:
+            results.append({"编号": r.get("编号", "?"), "hit": False, "quote": quote, "checkable": False})
+            continue
+        ok = all(squeeze(p.strip("“”\"")) in body for p in parts)
+        results.append({"编号": r.get("编号", "?"), "hit": ok, "quote": quote, "checkable": True})
     return results
 
 
