@@ -56,8 +56,19 @@ def parse_owners(cell, names):
 
 
 def quote_ok(row, raw):
+    """与 qc_tools.check_quotes 同口径：先做空白归一化再逐字比对。
+
+    空依据返回 False（不加分），但调用方应另行提示“不可检”，
+    而不是把它当成“依据不可追溯”扣风险分——两者责任不同。
+    """
+    def squeeze(s):
+        return re.sub(r"\s+", "", s)
+
+    body = squeeze(raw or "")
     parts = [p.strip() for p in re.split(r"[｜|＋+]", (row.get("原文依据") or "")) if p.strip()]
-    return bool(parts) and all(p.strip("“”\"") in raw for p in parts)
+    if not parts:
+        return False
+    return all(squeeze(p.strip("“”\"")) in body for p in parts)
 
 
 def build_items(rows, names, raw):
@@ -69,7 +80,9 @@ def build_items(rows, names, raw):
         no_due = (not due) or due.startswith("待确认")
         shared = len(owners) > 1
         soft = "讨论性表述" in (r.get("约束") or "")
-        bad_quote = not quote_ok(r, raw) if raw else False
+        has_quote = bool((r.get("原文依据") or "").strip())
+        # 不可检（缺依据列/空串）不算“依据不可追溯”：无法检查不等于检查失败，不扣风险分
+        bad_quote = (has_quote and not quote_ok(r, raw)) if raw else False
 
         risk = 0
         tags = []

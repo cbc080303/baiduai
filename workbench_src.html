@@ -1,0 +1,557 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>会议待办质检工作台</title>
+<style>
+:root{--bg:#f6f7f9;--card:#fff;--ink:#1b2330;--sub:#5d6b7e;--line:#e3e7ee;--line2:#cfd6e0;--ok:#12855b;--okbg:#e6f5ee;--bad:#b4261c;--badbg:#fdecea;--warn:#8a5a00;--warnbg:#fdf3dd;--brand:#2f5bd7;--brandbg:#eaf0ff}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.7 -apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",Arial,sans-serif}
+.wrap{max-width:1080px;margin:0 auto;padding:28px 20px 64px}
+header h1{font-size:24px;margin:0 0 6px}
+header p{margin:0;color:var(--sub);font-size:14px}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:20px}
+@media(max-width:820px){.grid{grid-template-columns:1fr}}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px}
+.card h2{font-size:15px;margin:0 0 4px;display:flex;align-items:center;gap:8px}
+.card .hint{color:var(--sub);font-size:13px;margin:0 0 10px}
+.card .hint.warn{color:var(--warn);background:var(--warnbg);border-radius:6px;padding:6px 8px}
+textarea{width:100%;min-height:190px;border:1px solid var(--line2);border-radius:8px;padding:10px 12px;font:13px/1.7 ui-monospace,SFMono-Regular,Consolas,monospace;resize:vertical;background:#fff;color:var(--ink)}
+textarea:focus{outline:2px solid var(--brandbg);border-color:var(--brand)}
+.row{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-top:10px}
+button{font:inherit;font-size:13px;padding:7px 14px;border-radius:8px;border:1px solid var(--line2);background:#fff;color:var(--ink);cursor:pointer}
+button:hover{border-color:var(--brand);color:var(--brand)}
+button.primary{background:var(--brand);border-color:var(--brand);color:#fff;font-weight:600;padding:9px 22px}
+button.primary:hover{background:#2749b3;color:#fff}
+label.chk{font-size:13px;color:var(--sub);display:flex;align-items:center;gap:6px}
+.preflight{margin:18px 0 0;border:1px solid #f0dfb0;background:var(--warnbg);color:#6b4600;border-radius:10px;padding:12px 14px;font-size:13px}
+.preflight h3{margin:0 0 6px;font-size:14px;color:#6b4600}
+.preflight ul{margin:0;padding-left:18px}
+.preflight li{margin:2px 0}
+.preflight .fix{color:#8a5a00}
+.summary{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin:18px 0 8px}
+.kpi{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px 14px}
+.kpi .n{font-size:24px;font-weight:700;line-height:1.2}
+.kpi .t{font-size:12px;color:var(--sub)}
+.kpi .s{font-size:11px;color:var(--sub);margin-top:2px}
+.kpi.bad .n{color:var(--bad)}.kpi.ok .n{color:var(--ok)}.kpi.warn .n{color:var(--warn)}
+section.out{margin-top:18px}
+section.out h3{font-size:15px;margin:0 0 8px;padding-left:9px;border-left:3px solid var(--brand)}
+table{width:100%;border-collapse:collapse;font-size:13px;background:var(--card);border:1px solid var(--line);border-radius:10px;overflow:hidden}
+th,td{padding:8px 10px;text-align:left;border-bottom:1px solid var(--line);vertical-align:top}
+th{background:#f1f4f9;font-weight:600;font-size:12px;color:var(--sub)}
+tr:last-child td{border-bottom:none}
+td.num{width:52px;color:var(--sub)}
+.tag{display:inline-block;font-size:12px;padding:1px 7px;border-radius:20px;background:var(--brandbg);color:var(--brand)}
+.v-ok{color:var(--ok);background:var(--okbg);padding:1px 7px;border-radius:20px;font-size:12px}
+.v-bad{color:var(--bad);background:var(--badbg);padding:1px 7px;border-radius:20px;font-size:12px}
+.v-warn{color:var(--warn);background:var(--warnbg);padding:1px 7px;border-radius:20px;font-size:12px}
+.note{font-size:13px;color:var(--sub);margin:8px 0 0}
+.note.alert{background:var(--warnbg);border:1px solid #f0dfb0;color:var(--warn);padding:10px 12px;border-radius:8px}
+.empty{color:var(--sub);font-size:13px;padding:10px 0}
+footer{margin-top:28px;font-size:13px;color:var(--sub);border-top:1px solid var(--line);padding-top:14px}
+footer b{color:var(--ink)}
+.mono{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:12px;color:var(--sub)}
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <h1>会议待办质检工作台</h1>
+  <p>粘贴转录与待办表，本机跑完 输入体检 / D 依据回查 / A 遗漏候选 / C 字段核查与分档。不联网、不上传、不调模型。</p>
+</header>
+
+<div class="grid">
+  <div class="card">
+    <h2>① 会议转录</h2>
+    <p class="hint">每行必须是 <span class="mono">姓名：内容</span> 的逐字转录；首行写 <span class="mono">参会人：张三、李四</span>。有名单才能做按人切片。</p>
+    <p class="hint warn">注意：粘「会议纪要正文」不行——那是概括过的文字，依据必然大面积不匹配。要逐字转写稿。</p>
+    <textarea id="tr-input" spellcheck="false" placeholder="参会人：张岚、王睿、李思远&#10;&#10;张岚：今天三件事……&#10;王睿：漏斗数据我拉一下，下周二之前给你。"></textarea>
+    <div class="row">
+      <button id="load-sample">载入样例</button>
+      <button id="clear-all">清空</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>② 待办表</h2>
+    <p class="hint">CSV / TSV / Markdown 表格都能识别。列名认 <span class="mono">编号,任务,负责人,截止时间,约束,原文依据</span>；缺「编号」自动补序号。</p>
+    <p class="hint warn">「原文依据」这一列不能省：没有它就无法做依据回查，工具会明确标成「不可检」而不是「全部不匹配」。</p>
+    <textarea id="todo-input" spellcheck="false" placeholder="编号,任务,负责人,截止时间,约束,原文依据&#10;1,拉取漏斗数据按渠道拆分,王睿,下周二前,按渠道拆分,&quot;王睿，你把漏斗数据拉出来……&quot;"></textarea>
+    <div class="row">
+      <label class="chk"><input type="checkbox" id="ignore-space" checked> 忽略空白差异（默认开）</label>
+      <button id="pick-file">从文件导入 CSV</button>
+      <input type="file" id="file-input" accept=".csv,.tsv,.txt" hidden>
+    </div>
+  </div>
+</div>
+
+<div class="row" style="margin-top:14px">
+  <button class="primary" id="run">跑质检</button>
+  <button id="dl-md">下载报告 .md</button>
+  <button id="dl-csv">下载标注 .csv</button>
+  <span class="note" id="status" style="margin:0"></span>
+</div>
+
+<div id="result">
+  <div class="empty" id="placeholder">尚未运行。点「跑质检」，或先「载入样例」看一遍完整输出。</div>
+</div>
+
+<footer>
+  <b>口径</b>：D 为字符串匹配（硬结论，默认去空白后比对）；A 只出候选、采纳权在你；C 区分「原文无线索」与「有线索未填」；风险分档按缺负责人 / 缺截止 / 责任共担 / 软要求 + 依据不可追溯加权，与 <span class="mono">org_view.py</span> 同向。<br>
+  <b>三态</b>：依据「不可检」（缺列或空串）不计入命中率分母，也不按「不可追溯」扣风险分——无法检查不等于检查失败。<br>
+  <b>不做</b>：B（误提）的语义裁决、语义级判断、录音转写、纪要撰写。附加的「软要求候选」只是规则召回，不是结论。<br>
+  <b>边界</b>：不带参会人名单时 A 通道不可用；同句两人时人物归属可能标成句内先出现者，候选必须人工改判。
+</footer>
+</div>
+
+<script>
+/*==A_CHANNEL==*/
+</script>
+
+<script>
+/*==ENGINE-START==*/
+const QC = (function(){
+  const MISSING = new Set(["", "待确认", "待补充", "-", "—", "无", "none", "None", "TBD"]);
+  const DUE_RE = /(今天|明天|后天|本周[一二三四五六日天]?|下周[一二三四五六日天]?|本周内|下周内|周[一二三四五六日天]|下个月\s*\d{1,2}\s*[号日]|\d{1,2}\s*月\s*\d{1,2}\s*[号日]|\d{1,2}\s*月(上|中|下)?旬?|月底|月初|季度末|评审会前|上线前|放假前|\d+\s*天内)/;
+  const SOFT_RE = /(建议|可以考虑|可以|要不|最好|我觉得|要不要|是不是|如果|先不)/;
+  const W = {noOwner:3, noDue:2, soft:2, shared:1, badQuote:3};
+
+  const ALIAS = {
+    "序号":"编号", "任务":"任务", "待办":"任务", "待办事项":"任务", "工作":"任务",
+    "负责人":"负责人", "责任人":"负责人", "执行人":"负责人", "owner":"负责人",
+    "截止时间":"截止时间", "截止":"截止时间", "时限":"截止时间", "due":"截止时间",
+    "约束":"约束", "说明":"约束", "备注":"约束",
+    "原文依据":"原文依据", "依据":"原文依据", "原句":"原文依据", "quote":"原文依据"
+  };
+
+  function squeeze(s){ return String(s == null ? "" : s).replace(/\s+/g, ""); }
+
+  function parseCsvLine(line){
+    const out = []; let cur = ""; let q = false;
+    for (let i = 0; i < line.length; i++){
+      const ch = line[i];
+      if (q){
+        if (ch === '"' && line[i+1] === '"'){ cur += '"'; i++; }
+        else if (ch === '"') q = false;
+        else cur += ch;
+      } else if (ch === '"') q = true;
+      else if (ch === ','){ out.push(cur); cur = ""; }
+      else cur += ch;
+    }
+    out.push(cur);
+    return out;
+  }
+
+  function parseRows(text){
+    const lines = String(text || "").replace(/\r\n?/g, "\n").split("\n").filter(l => l.trim() !== "");
+    if (!lines.length) return [];
+    const isMd = lines[0].trim().startsWith("|");
+    const isTab = !isMd && lines[0].includes("\t");
+    let head, body;
+    if (isMd){
+      const cut = l => l.trim().replace(/^\|/, "").replace(/\|$/, "").split("|").map(x => x.trim());
+      head = cut(lines[0]);
+      body = lines.slice(1).filter(l => !/^[\s|:\-]+$/.test(l)).map(cut);
+    } else if (isTab){
+      head = lines[0].split("\t").map(x => x.trim());
+      body = lines.slice(1).map(l => l.split("\t"));
+    } else {
+      head = parseCsvLine(lines[0]).map(x => x.trim());
+      body = lines.slice(1).map(parseCsvLine);
+    }
+    const keys = head.map(h => ALIAS[h] || h);
+    return body.map((cells, i) => {
+      const o = {};
+      keys.forEach((k, j) => { o[k] = (cells[j] || "").trim(); });
+      if (!o["编号"]) o["编号"] = String(i + 1);
+      ["任务", "负责人", "截止时间", "约束", "原文依据"].forEach(k => { if (o[k] === undefined) o[k] = ""; });
+      return o;
+    }).filter(o => o["任务"]);
+  }
+
+  // 三态：命中 / 不匹配 / 不可检
+  function checkQuotes(rows, raw, opts){
+    opts = opts || {};
+    const body = opts.normalize === false ? String(raw || "") : squeeze(raw);
+    return rows.map(r => {
+      const quote = String(r["原文依据"] || "").trim();
+      const parts = quote.split(/[｜＋+]/).map(p => p.trim()).filter(Boolean);
+      if (!parts.length) return {编号: r["编号"], quote: quote, hit: false, checkable: false};
+      const norm = s => opts.normalize === false ? String(s) : squeeze(s);
+      const ok = parts.every(p => body.includes(norm(p.replace(/^[“”"]+|[“”"]+$/g, ""))));
+      return {编号: r["编号"], quote: quote, hit: ok, checkable: true};
+    });
+  }
+
+  function preflight(raw, rows, a){
+    const issues = [];
+    const hasNames = !!(raw.match(/参会人[：:]/));
+    const speakerLines = (raw.match(/^[^\s：:，。]{1,4}[：:]/gm) || []).length;
+    if (!raw.trim()) issues.push({level: "block", text: "转录为空。", fix: "粘一份逐字转写稿，或点「载入样例」。"});
+    if (raw.trim() && !hasNames) issues.push({level: "warn", text: "没读到「参会人：」行。", fix: "按人切片查遗漏需要这份名单；缺了 A 通道不可用，D 与 C 仍可跑。"});
+    if (raw.trim() && hasNames && speakerLines === 0) issues.push({level: "block", text: "读到了参会人，但一句「姓名：内容」都没切出来。", fix: "检查每行是不是「姓名：」开头，姓名要与名单一致（甲/乙/丙/丁也支持）。"});
+    if (raw.trim() && !hasNames && speakerLines === 0 && raw.length > 60) issues.push({level: "block", text: "这段文字看着像会议纪要正文，不像逐字转写稿。", fix: "纪要正文是概括过的，依据回查会全不匹配——不要用它跑 D。"});
+    if (!rows.length) issues.push({level: "block", text: "待办表没读出任务行。", fix: "表头要有「任务」列；六列顺序不限。"});
+    const withQuote = rows.filter(r => String(r["原文依据"] || "").trim()).length;
+    if (rows.length && !withQuote) issues.push({level: "block", text: "待办表没有「原文依据」，或这一列全为空。", fix: "补上依据列，否则 D 只能标「不可检」；也可点「载入样例」看标准格式。"});
+    const noOwnerCol = rows.length && rows.every(r => !String(r["负责人"] || "").trim());
+    const noDueCol = rows.length && rows.every(r => !String(r["截止时间"] || "").trim());
+    if (noOwnerCol) issues.push({level: "warn", text: "「负责人」列全空。", fix: "C 与分档会把这些全判为待人工判断，不是数据结论。"});
+    if (noDueCol) issues.push({level: "warn", text: "「截止时间」列全空。", fix: "同上：先确认是不是列名为「时限/截止」被漏识别。"});
+    return {issues: issues, hasNames: hasNames, withQuote: withQuote};
+  }
+
+  function parseOwners(cell, names){
+    if (!cell || String(cell).includes("待确认")) return [];
+    const out = [];
+    String(cell).split(/[／/]/).forEach(seg => {
+      seg = seg.trim();
+      if (!seg) return;
+      const role = seg.includes("配合") ? "配合" : "主";
+      for (const nm of names){
+        if (nm && seg.includes(nm)){ out.push({name: nm, role: role}); break; }
+      }
+    });
+    return out;
+  }
+
+  function fieldCheck(rows, names){
+    return rows.map(r => {
+      const noOwner = MISSING.has(String(r["负责人"] || "").trim());
+      const noDue = MISSING.has(String(r["截止时间"] || "").trim());
+      const pool = String(r["任务"] || "") + " " + String(r["原文依据"] || "");
+      let ownerHint = "—", dueHint = "—";
+      if (noOwner){
+        const hit = names.filter(nm => nm && pool.includes(nm));
+        if (hit.length && (typeof A_CHANNEL !== "undefined") && A_CHANNEL.hasAction && A_CHANNEL.hasAction(pool))
+          ownerHint = "原文出现 " + hit.join("、") + "，且同句有指派动作，待确认是否责任人";
+        else if (hit.length) ownerHint = "原文出现 " + hit.join("、") + "，但无指派动作，不能据此认定";
+        else ownerHint = "原文无线索";
+      }
+      if (noDue){
+        const m = pool.match(DUE_RE);
+        dueHint = m ? "原文有时限词「" + m[1] + "」，需确认是完成时限还是动作时点" : "原文无线索";
+      }
+      const status = noOwner && noDue ? "缺负责人+缺截止" : (noOwner ? "缺负责人" : (noDue ? "缺截止" : "字段齐"));
+      return {编号: r["编号"], 任务: r["任务"], 负责人: r["负责人"], 截止时间: r["截止时间"],
+              字段状态: status, 负责人线索: ownerHint, 截止线索: dueHint};
+    });
+  }
+
+  function buildItems(rows, names, quotes){
+    const map = {};
+    (quotes || []).forEach(q => { map[q["编号"]] = q; });
+    return rows.map(r => {
+      const owners = parseOwners(r["负责人"], names);
+      const noOwner = owners.length === 0;
+      const due = String(r["截止时间"] || "").trim();
+      const noDue = !due || due.indexOf("待确认") === 0;
+      const shared = owners.length > 1;
+      const soft = String(r["约束"] || "").includes("讨论性表述");
+      const q = map[r["编号"]];
+      const badQuote = !!(q && q.checkable && !q.hit);   // 不可检不扣分
+      let risk = 0; const tags = [];
+      if (noOwner){ risk += W.noOwner; tags.push("缺负责人"); }
+      if (noDue){ risk += W.noDue; tags.push("缺截止"); }
+      if (soft){ risk += W.soft; tags.push("软要求待定"); }
+      if (shared){ risk += W.shared; tags.push("责任共担"); }
+      if (badQuote){ risk += W.badQuote; tags.push("依据不可追溯"); }
+      return {编号: r["编号"], 任务: r["任务"], 负责人: r["负责人"], owners: owners,
+              risk: risk, tags: tags, no_owner: noOwner, no_due: noDue, shared: shared, soft: soft,
+              level: risk >= 3 ? "P0" : (risk === 2 ? "P1" : (risk === 1 ? "P2" : "P3"))};
+    });
+  }
+
+  function readiness(it){
+    if (it.no_owner || it.soft) return "待人工判断";
+    if (it.no_due || it.shared) return "需补字段";
+    return "可直接建单";
+  }
+
+  function softCandidates(rows){
+    return rows.filter(r => SOFT_RE.test(String(r["任务"] || "") + " " + String(r["原文依据"] || "")))
+               .map(r => ({编号: r["编号"], 任务: r["任务"], 原文依据: r["原文依据"]}));
+  }
+
+  function run(raw, rowsText, opts){
+    opts = opts || {};
+    const rows = parseRows(rowsText);
+    const normalize = opts.ignoreSpace !== false;      // 默认开
+    const quotes = checkQuotes(rows, raw, {normalize: normalize});
+    let names = [];
+    const m = String(raw).match(/参会人[：:]\s*(.+)/);
+    if (m) names = m[1].split(/[、,，\s]+/).filter(Boolean);
+    const a = (typeof A_CHANNEL !== "undefined") ? A_CHANNEL.scan(raw, rows)
+      : {warn: "A 通道未加载", names: names, count: 0, cands: [], low: [], orgs: []};
+    if (!names.length && a.names && a.names.length) names = a.names;
+    const fields = fieldCheck(rows, names);
+    const items = buildItems(rows, names, quotes);
+    const rd = {"可直接建单": 0, "需补字段": 0, "待人工判断": 0};
+    items.forEach(it => { rd[readiness(it)]++; });
+    const checkable = quotes.filter(q => q.checkable).length;
+    const ctx = {
+      raw: raw, rows: rows, quotes: quotes, names: names, a: a, fields: fields, items: items,
+      readiness: rd, soft: softCandidates(rows), normalize: normalize,
+      preflight: preflight(String(raw || ""), rows, a),
+      total: quotes.length, checkable: checkable, uncheckable: quotes.length - checkable,
+      hit: quotes.filter(q => q.checkable && q.hit).length
+    };
+    return ctx;
+  }
+
+  function hitBad(ctx){ return ctx.quotes.filter(q => q.checkable && !q.hit); }
+
+  function mdEsc(s){ return String(s == null ? "" : s).replace(/\|/g, "\\|").replace(/\n/g, " "); }
+
+  function mdTable(headers, rows){
+    if (!rows.length) return "_（无）_\n\n";
+    let out = "| " + headers.join(" | ") + " |\n|" + headers.map(() => "---").join("|") + "|\n";
+    rows.forEach(r => { out += "| " + headers.map(h => mdEsc(r[h])).join(" | ") + " |\n"; });
+    return out + "\n";
+  }
+
+  function report(ctx){
+    let L = [];
+    const bad = hitBad(ctx);
+    L.push("# 会议待办质检报告\n\n");
+    L.push("输入：参会人 " + (ctx.names || []).length + " 人｜待办 " + ctx.rows.length + " 条\n\n");
+    L.push("## 一、结论\n\n");
+    const iss = ctx.preflight.issues || [];
+    L.push("- 输入体检：" + (iss.length ? "**" + iss.length + " 项提示**（见下）" : "通过") + "\n");
+    iss.forEach(x => L.push("  - [" + (x.level === "block" ? "阻断" : "提示") + "] " + x.text + " " + x.fix + "\n"));
+    L.push("- 依据回查：**" + ctx.hit + "/" + ctx.checkable + " 命中**" +
+           (ctx.uncheckable ? "（另 " + ctx.uncheckable + " 条不可检，不计入分母）" : "") +
+           (bad.length ? "，不匹配 " + bad.length + " 条：" + bad.map(h => "#" + h["编号"]).join("、") : "") + "\n");
+    L.push("- 遗漏候选：**" + ctx.a.cands.length + " 条**（低置信池 " + ctx.a.low.length + " 条、机构主体 " + (ctx.a.orgs || []).length + " 条另列）\n");
+    L.push("- 可建单三档：可直接建单 **" + ctx.readiness["可直接建单"] + "**｜需补字段 **" +
+           ctx.readiness["需补字段"] + "**｜待人工判断 **" + ctx.readiness["待人工判断"] + "**\n\n");
+    L.push("## 二、逐条明细\n\n### D 依据逐字回查\n\n");
+    if (!ctx.checkable){
+      L.push("本次没有可检依据（待办表缺「原文依据」列或全为空），D 标为不可检，不算不匹配。\n\n");
+    } else if (!bad.length){
+      L.push("可检 " + ctx.checkable + " 条全部命中，未发现改写或跨会议引用。\n\n");
+    } else {
+      L.push("以下条目的原文依据在本次转录中找不到对应句，属概括、改写或跨会议引用：\n\n");
+      bad.forEach(h => L.push("- **#" + h["编号"] + "**：引用句「" + mdEsc(h.quote) + "」未命中\n"));
+      if (ctx.uncheckable) L.push("\n另 " + ctx.uncheckable + " 条无依据可查（不可检）：" +
+        ctx.quotes.filter(q => !q.checkable).map(q => "#" + q["编号"]).join("、") + "\n");
+      L.push("\n");
+    }
+    L.push("### A 按人切片候选（只出候选，采纳权在用户）\n\n");
+    if (ctx.a.warn) L.push("_" + ctx.a.warn + "（D 通道不受影响）_\n\n");
+    if (ctx.a.cands.length){
+      L.push(mdTable(["序号", "人物", "时间线索", "置信度", "原文"],
+        ctx.a.cands.map((c, i) => ({"序号": i + 1, "人物": c["人物"], "时间线索": c["时间"], "置信度": c["置信度"], "原文": c["句"]}))));
+    } else {
+      L.push("本次未产出候选。**候选 0 条不等于没问题**：覆盖判断按表内条目吸收同句动作，同句两件事可能被一条吸收，需人工再读一遍。\n\n");
+    }
+    if (ctx.a.low.length){
+      L.push("低置信池（不上候选表，需人工过目）：\n\n");
+      ctx.a.low.forEach(c => L.push("- [低] " + c["人物"] + "｜" + mdEsc(c["句"]) + "\n"));
+      L.push("\n");
+    }
+    if ((ctx.a.orgs || []).length){
+      L.push("机构主体（责任在机构而非个人）：\n\n");
+      ctx.a.orgs.forEach(o => L.push("- " + o["主体"] + "｜" + o["时间"] + "｜" + mdEsc(o["句"]) + "\n"));
+      L.push("\n");
+    }
+    L.push("### C 字段完整性\n\n");
+    L.push(mdTable(["编号", "字段状态", "任务", "负责人线索", "截止线索"], ctx.fields));
+    L.push("## 三、修正建议\n\n");
+    const todo = ctx.fields.filter(f => f["字段状态"] !== "字段齐");
+    if (!todo.length) L.push("字段层面无待补项。\n");
+    todo.forEach(f => L.push("- **#" + f["编号"] + "** " + f["字段状态"] + "：" + f["负责人线索"] + "；" + f["截止线索"] + "\n"));
+    if (bad.length){
+      L.push("\n依据层面：以下条目需回原文重引，或改写成可直接建单的描述：\n\n");
+      bad.forEach(h => L.push("- #" + h["编号"] + "\n"));
+    }
+    L.push("\n组织处理顺序（风险高在前）：\n\n");
+    const order = ctx.items.slice().sort((x, y) => y.risk - x.risk);
+    L.push(mdTable(["编号", "任务", "风险", "处置"], order.map(it => ({"编号": it["编号"], "任务": it["任务"], "风险": it.risk, "处置": readiness(it)}))));
+    L.push("## 四、边界与口径\n\n");
+    L.push("- 本报告由确定性规则产出：D 为字符串匹配，A 为规则切片，C 为字段与线索匹配；B（误提）与语义判断不在本工具内。\n");
+    L.push("- 依据为空（缺列或空串）标「不可检」，不计入命中率分母，也不按「依据不可追溯」扣风险分——无法检查不等于检查失败。\n");
+    if (ctx.normalize) L.push("- 依据比对已做空白归一化（去空格/换行后逐字匹配），不放宽到同义词。\n");
+    if (ctx.a.cands.length) L.push("- A 通道人物归属按句级判定：同句出现两人时可能标成句内先出现者，候选必须人工改判后再采纳。\n");
+    if (!(ctx.names || []).length) L.push("- 转录缺少「参会人：」行，A 通道未启用：按人切片需要先知道谁在会里。\n");
+    L.push("- 「可直接执行」（四要件齐全）与「可直接建单」（能直接建进任务系统）不是一回事，本报告按后者分档。\n");
+    L.push("- 不带准确率与 Kappa：样本量不足时不构成统计估计，只有条目级计数。\n");
+    return L.join("");
+  }
+
+  function csv(ctx){
+    const map = {};
+    ctx.quotes.forEach(q => { map[q["编号"]] = q; });
+    const esc = v => '"' + String(v == null ? "" : v).replace(/"/g, '""') + '"';
+    const head = ["编号", "任务", "负责人", "截止时间", "字段状态", "依据结论", "负责人线索", "截止线索", "风险", "处置"];
+    let out = head.join(",") + "\r\n";
+    ctx.rows.forEach((r, i) => {
+      const f = ctx.fields[i], it = ctx.items[i], q = map[r["编号"]] || {};
+      const verdict = !q.checkable ? "不可检" : (q.hit ? "命中" : "不匹配");
+      out += [r["编号"], r["任务"], r["负责人"], r["截止时间"], f["字段状态"], verdict,
+              f["负责人线索"], f["截止线索"], it.risk, readiness(it)
+             ].map(esc).join(",") + "\r\n";
+    });
+    return "\ufeff" + out;
+  }
+
+  return {parseRows: parseRows, checkQuotes: checkQuotes, fieldCheck: fieldCheck,
+          buildItems: buildItems, readiness: readiness, preflight: preflight,
+          run: run, report: report, csv: csv};
+})();
+/*==ENGINE-END==*/
+
+const SAMPLE_TR = "参会人：张岚、王睿、李思远、陈晨\n\n张岚：今天三件事，先把改版的节奏定下来。\n王睿：新用户引导的漏斗数据我拉一下，按渠道拆，下周二之前给你。\n张岚：行。李思远，支付回调重复通知那个问题，本周五前修完，先灰度 10%，没问题再全量。\n李思远：好，我排进去。\n张岚：陈晨你按现在的结构再出两版落地页视觉，下周三之前给我，咱们内部先选一版。\n陈晨：明白。另外展架尺寸得确认一下，别到时候又返工。\n张岚：李思远，压测环境你周四准备好，别拖到上线前。\n张岚：赵敏那边报价单本周内要拿到，拿不到就先要个框架协议。\n王睿：还有个事，数据看板的日活口径三个部门一直不一致，下个月 10 号之前得统一。\n张岚：对，这个必须统一，不然周报没法看。今天的纪要发项目群，抄送赵敏。";
+const SAMPLE_TODO = "编号,任务,负责人,截止时间,约束,原文依据\n" +
+  "1,拉取新用户引导漏斗数据并按渠道拆分,王睿,下周二前,按渠道拆分，交付张岚,\"王睿，你把新用户引导的漏斗数据拉出来，按渠道拆一下，下周二之前给我。\"\n" +
+  "2,修复支付回调重复通知,李思远,本周五前,先灰度 10%,李思远，本周五前修完，先灰度 10% 验证\n" +
+  "3,改版落地页输出两版视觉,陈晨,下周三前,内部先选一版,陈晨你按现在的结构再出两版落地页视觉，下周三之前给我\n" +
+  "4,确认市场物料展架尺寸,待确认,待确认,与王睿共同确认,另外市场物料的展架尺寸得跟王睿确认下\n" +
+  "5,获取星图渠道正式报价单,赵敏,本周内,拿不到则先要框架协议,赵敏那边报价单本周内要拿到，拿不到就先要个框架协议\n" +
+  "6,统一数据看板日活口径,待确认,下个月 10 号前,三个部门口径不一致,还有个事，数据看板的日活口径三个部门一直不一致，下个月 10 号之前得统一";
+
+const $ = id => document.getElementById(id);
+let LAST = null;
+
+function esc(s){
+  return String(s == null ? "" : s).replace(/[&<>"]/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"})[c]);
+}
+
+function render(ctx){
+  const bad = ctx.quotes.filter(q => q.checkable && !q.hit);
+  let h = "";
+
+  const iss = (ctx.preflight && ctx.preflight.issues) || [];
+  if (iss.length){
+    h += '<div class="preflight"><h3>输入体检：' + iss.length + " 项" + '</h3><ul>';
+    iss.forEach(x => { h += '<li><b>' + (x.level === "block" ? "阻断" : "提示") + '</b> ' + esc(x.text) + ' <span class="fix">' + esc(x.fix) + '</span></li>'; });
+    h += "</ul></div>";
+  }
+
+  h += '<div class="summary">';
+  h += '<div class="kpi ' + (bad.length ? "bad" : "ok") + '"><div class="n">' + ctx.hit + "/" + ctx.checkable + '</div><div class="t">依据命中（可检）</div>' +
+       (ctx.uncheckable ? '<div class="s">另 ' + ctx.uncheckable + " 条不可检</div>" : "") + '</div>';
+  h += '<div class="kpi ' + (ctx.a.cands.length ? "warn" : "") + '"><div class="n">' + ctx.a.cands.length + '</div><div class="t">遗漏候选（需人工改判）</div></div>';
+  h += '<div class="kpi ok"><div class="n">' + ctx.readiness["可直接建单"] + '</div><div class="t">可直接建单</div></div>';
+  h += '<div class="kpi warn"><div class="n">' + ctx.readiness["需补字段"] + '</div><div class="t">需补字段</div></div>';
+  h += '<div class="kpi bad"><div class="n">' + ctx.readiness["待人工判断"] + '</div><div class="t">待人工判断</div></div>';
+  h += '</div>';
+
+  h += '<section class="out"><h3>D 依据回查（命中 / 不匹配 / 不可检）</h3>';
+  if (!ctx.rows.length){ h += '<div class="empty">待办表为空——先粘贴六列表，或点「载入样例」。</div>'; }
+  else {
+    h += '<table><thead><tr><th>编号</th><th>结果</th><th>原文依据</th></tr></thead><tbody>';
+    ctx.quotes.forEach(q => {
+      const cls = !q.checkable ? "v-warn" : (q.hit ? "v-ok" : "v-bad");
+      const txt = !q.checkable ? "不可检" : (q.hit ? "命中" : "不匹配");
+      h += '<tr><td class="num">' + esc(q["编号"]) + '</td><td><span class="' + cls + '">' + txt + '</span></td><td>' + esc(q.quote || "—") + '</td></tr>';
+    });
+    h += '</tbody></table>';
+    if (!ctx.checkable) h += '<p class="note alert">没有可检依据：待办表缺「原文依据」列或全为空。这不是「全部不匹配」，是「无法检查」。</p>';
+    else if (bad.length) h += '<p class="note">不匹配通常两种原因：转录被润色改过，或表内依据被概括改写。</p>';
+    else h += '<p class="note">可检 ' + ctx.checkable + ' 条全部命中。</p>';
+  }
+  h += '</section>';
+
+  h += '<section class="out"><h3>A 按人切片候选</h3>';
+  if (ctx.a.warn) h += '<p class="note alert">' + esc(ctx.a.warn) + ' D 通道不受影响。</p>';
+  if (!ctx.a.cands.length){
+    h += '<p class="note">本次未产出候选。<b>候选 0 条不等于没问题</b>：覆盖判断按表内条目吸收同句动作，同句两件事可能被一条吸收，需人工再读一遍。</p>';
+  } else {
+    h += '<table><thead><tr><th>#</th><th>人物</th><th>置信度</th><th>时间</th><th>原句</th></tr></thead><tbody>';
+    ctx.a.cands.forEach((c, i) => {
+      h += '<tr><td class="num">' + (i + 1) + '</td><td>' + esc(c["人物"]) + '</td><td><span class="tag">' + esc(c["置信度"]) + '</span></td><td class="num">' + esc(c["时间"]) + '</td><td>' + esc(c["句"]) + '</td></tr>';
+    });
+    h += '</tbody></table><p class="note">候选不等于遗漏。人物按句级归属，同句两人时可能标错，逐条改判后再采纳。</p>';
+  }
+  if (ctx.a.low.length) h += '<p class="note">低置信池 ' + ctx.a.low.length + ' 条：' + ctx.a.low.map(c => esc(c["人物"])).join("、") + '</p>';
+  if ((ctx.a.orgs || []).length){
+    h += '<table style="margin-top:8px"><thead><tr><th>主体</th><th>时间</th><th>原句</th></tr></thead><tbody>';
+    ctx.a.orgs.forEach(o => { h += '<tr><td>' + esc(o["主体"]) + '</td><td class="num">' + esc(o["时间"]) + '</td><td>' + esc(o["句"]) + '</td></tr>'; });
+    h += '</tbody></table><p class="note">机构主体只作提醒，责任没落到人，不进候选表。</p>';
+  }
+  h += '</section>';
+
+  h += '<section class="out"><h3>C 字段完整性 + 风险分档</h3>';
+  if (ctx.rows.length){
+    h += '<table><thead><tr><th>编号</th><th>字段状态</th><th>负责人线索</th><th>截止线索</th><th>风险</th><th>处置</th></tr></thead><tbody>';
+    ctx.fields.forEach((f, i) => {
+      const it = ctx.items[i];
+      h += '<tr><td class="num">' + esc(f["编号"]) + '</td><td>' + esc(f["字段状态"]) + '</td><td class="num">' + esc(f["负责人线索"]) + '</td><td class="num">' + esc(f["截止线索"]) + '</td><td class="num">' + it.risk + '</td><td><span class="' + (it.no_owner || it.soft ? "v-bad" : (it.no_due || it.shared ? "v-warn" : "v-ok")) + '">' + readiness(it) + '</span></td></tr>';
+    });
+    h += '</tbody></table>';
+  } else h += '<div class="empty">无待办数据。</div>';
+  h += '</section>';
+
+  if (ctx.soft.length){
+    h += '<section class="out"><h3>附加：软要求候选（规则召回，不是结论）</h3>';
+    h += '<table><thead><tr><th>编号</th><th>任务</th><th>原文依据</th></tr></thead><tbody>';
+    ctx.soft.forEach(s => { h += '<tr><td class="num">' + esc(s["编号"]) + '</td><td>' + esc(s["任务"]) + '</td><td>' + esc(s["原文依据"]) + '</td></tr>'; });
+    h += '</tbody></table><p class="note">只为提醒“这句可能是讨论不是派活”，是否误提要你判断；B 维度本身不在本工具内。</p></section>';
+  }
+
+  $("result").innerHTML = h;
+}
+
+function collect(){
+  const raw = $("tr-input").value.trim();
+  const todo = $("todo-input").value.trim();
+  if (!raw){ $("status").textContent = "先粘贴转录。"; return null; }
+  if (!todo){ $("status").textContent = "先粘贴待办表（六列）。"; return null; }
+  const rows = QC.parseRows(todo);
+  if (!rows.length){ $("status").textContent = "待办表读不出任务列，检查表头是否为 编号,任务,负责人,截止时间,约束,原文依据。"; return null; }
+  return QC.run(raw, todo, {ignoreSpace: $("ignore-space").checked});
+}
+
+$("run").addEventListener("click", () => {
+  const ctx = collect();
+  if (!ctx) return;
+  LAST = ctx;
+  $("status").textContent = "已跑完：" + ctx.rows.length + " 条待办，" + ctx.total + " 条依据（可检 " + ctx.checkable + "）。";
+  render(ctx);
+});
+
+$("load-sample").addEventListener("click", () => {
+  $("tr-input").value = SAMPLE_TR;
+  $("todo-input").value = SAMPLE_TODO;
+  $("run").click();
+});
+
+$("clear-all").addEventListener("click", () => {
+  $("tr-input").value = ""; $("todo-input").value = ""; LAST = null;
+  $("status").textContent = "";
+  $("result").innerHTML = '<div class="empty" id="placeholder">尚未运行。点「跑质检」，或先「载入样例」看一遍完整输出。</div>';
+});
+
+$("pick-file").addEventListener("click", () => $("file-input").click());
+$("file-input").addEventListener("change", e => {
+  const f = e.target.files && e.target.files[0];
+  if (!f) return;
+  const r = new FileReader();
+  r.onload = () => { $("todo-input").value = String(r.result || "").replace(/^\ufeff/, ""); $("status").textContent = "已导入 " + f.name; };
+  r.readAsText(f, "utf-8");
+});
+
+function download(name, text, mime){
+  const blob = new Blob([text], {type: mime || "text/plain;charset=utf-8"});
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = name;
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 0);
+}
+
+$("dl-md").addEventListener("click", () => {
+  const ctx = LAST || collect(); if (!ctx) return; LAST = ctx;
+  download("质检报告.md", QC.report(ctx), "text/markdown;charset=utf-8");
+});
+$("dl-csv").addEventListener("click", () => {
+  const ctx = LAST || collect(); if (!ctx) return; LAST = ctx;
+  download("质检标注.csv", QC.csv(ctx), "text/csv;charset=utf-8");
+});
+</script>
+</body>
+</html>
