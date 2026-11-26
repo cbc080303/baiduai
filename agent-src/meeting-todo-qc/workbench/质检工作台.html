@@ -236,7 +236,7 @@
 
   <div class="card rec" id="rec" style="grid-column:1/-1">
     <h2><span class="idx" aria-hidden="true">R</span>会议记录 · 边录边记 <span class="rec-opt">可选</span></h2>
-    <p class="hint">开会时点「开始录音」，随手记要点；也可点「语音识别」边说边出文字，一句话说完自动落一段，点「送入质检并运行」直接进下面的「会议转录」跑一遍。<b>识别只出文字、不区分说话人</b>——换人时点一下名字，之后的话就记到他名下（浏览器端没有声纹分离，全自动区分要靠会议平台转写）。默认只走端上识别，音频不出本机；只有把「识别方式」改成云端，音频才会发给浏览器厂商。</p>
+    <p class="hint">开会时点「开始录音」，随手记要点；也可点「语音识别」边说边出文字，一句话说完自动落一段，点「送入质检并运行」直接进下面的「会议转录」跑一遍。<b>识别只出文字、不区分说话人</b>——换人时点一下名字，之后的话就记到他名下；<b>换人前还没到停顿的半句会先按原来的说话人落下</b>，不会记到新人名下（浏览器端没有声纹分离，全自动区分要靠会议平台转写）。识别可以和录音同时开（两路共用一支麦克风，个别设备会抢不到，报 <span class="mono">audio-capture</span> 时只留一种）；<b>不录音也有会话时间码</b>，每行照顺序递增。默认只走端上识别，音频不出本机；只有把「识别方式」改成云端，音频才会发给浏览器厂商。</p>
     <div class="rec-grid">
       <div>
         <label class="rec-fld" for="rec-title"><span>会议名</span></label>
@@ -979,7 +979,9 @@ var RECORDER = (function () {
       "# 记录时间：" + dateText(rec.createdAt),
       "# 时长：" + clock(rec.duration || 0),
       "# 说话人：" + (names.length ? names.join("、") : DEFAULT_SPEAKER),
-      "# 记录方式：" + (rec.audio ? "录音 + 速记（录音随包留档）" : "纯文字录入"),
+      "# 记录方式：" + (rec.audio ? "录音 + 速记（录音随包留档）" : "纯文字录入") +
+        (rec.asr && rec.asr.used ? "；其中含语音识别转写（" + (rec.asr.mode === "remote" ? "云端识别" : "端上识别") +
+          (rec.asr.lang ? "，" + rec.asr.lang : "") + "；识别只出文字，说话人由录入时手动切换）" : ""),
       "# 说明：本文件是原稿备份，时间码与说话人前缀照录入原样保留；识别结果照录，不补词、不改字。"
     ];
     var body = [];
@@ -1014,7 +1016,11 @@ var RECORDER = (function () {
       marks: (rec.turns || []).filter(function (t) { return t && t.mark; }).length,
       hasAudio: !!rec.audio,
       audioType: rec.audioType || "",
-      asr: false
+      // 记录里是否真的用过识别：溯源要用，不能像以前那样写死 false
+      asr: (rec.asr && rec.asr.used)
+        ? { used: true, mode: rec.asr.mode === "remote" ? "remote" : "local",
+            lang: rec.asr.lang || "", engine: rec.asr.engine || "" }
+        : false
     }, null, 2);
   }
 
@@ -1462,8 +1468,20 @@ var RECORDER = (function () {
       refreshFloat();
     }
 
+    // 会话计时：只识别、不录音的时候也必须有递增的时间码，
+    // 否则整篇都会是 [00:00:00]，看不出先后顺序。
+    // 录音中取录音时长；录音暂停时用会话时长兜底，避免时间码停在原地重复。
+    var sessionAt = 0;
+    function sessionElapsed() { return sessionAt ? (Date.now() - sessionAt) / 1000 : 0; }
+
     function currentAt() {
-      return recordingStarted ? rec.elapsed() : null;
+      if (recordingStarted) {
+        var byRec = rec.elapsed();
+        if (!sessionAt) sessionAt = Date.now() - byRec * 1000;
+        return Math.max(byRec, sessionElapsed());
+      }
+      if (!sessionAt) sessionAt = Date.now();
+      return sessionElapsed();
     }
 
     function submitLine() {
@@ -1654,6 +1672,9 @@ var RECORDER = (function () {
 
     // 浏览器只出文字，不区分说话人（没有声纹分离）；换人由人点一下，之后落行归到新名字。
     var asrCtl = null, asrOn = false;
+    var asrUsed = false;                              // 这段记录里是否真落过识别行（meta 溯源用）
+    var pendingWho = null;                            // 换人瞬间：还没落段的那半句归旧人
+    var prevSpeaker = "";
 
     function asrSay(text) { if (el.asrState) el.asrState.textContent = text || ""; }
 
@@ -1661,6 +1682,15 @@ var RECORDER = (function () {
       if (!el.asrBtn) return;
       el.asrBtn.textContent = on ? "停止识别" : "语音识别";
       el.asrBtn.setAttribute("aria-pressed", on ? "true" : "false");
+    }
+
+    function asrMode() { return (el.asrMode && el.asrMode.value === "remote") ? "remote" : "local"; }
+    function asrLang() { return (el.asrLang && el.asrLang.value) || (typeof ASR !== "undefined" ? ASR.DEFAULT_LANG : ""); }
+
+    function langLabel() {
+      var code = asrLang(), i, L = (typeof ASR !== "undefined" && ASR.LANGS) || [];
+      for (i = 0; i < L.length; i++) if (L[i].code === code) return L[i].label;
+      return code || "默认语言";
     }
 
     function renderSwitch() {
@@ -1674,6 +1704,23 @@ var RECORDER = (function () {
       el.switchBox.innerHTML = html;
     }
 
+    // 换人前把「已经说了但还没到停顿」的半句按旧说话人落下。
+    // 不这么做，那半句会跟着新名字进成稿——这是最容易出的错人。
+    function flushTo(who) {
+      if (!asrCtl) return;
+      pendingWho = who;
+      try { asrCtl.flushNow(); } finally { pendingWho = null; }
+    }
+
+    function switchTo(name) {
+      var before = speaker();
+      if (el.speaker) el.speaker.value = name;
+      if (asrOn && before !== name) flushTo(before);
+      prevSpeaker = name;
+      renderSwitch();
+      asrSay(name ? ("已换成 " + name + "：接下来识别到的话记到他名下") : "已换成「未标注」");
+    }
+
     if (el.switchBox) el.switchBox.addEventListener("click", function (e) {
       var node = e.target, b = null;
       while (node && node !== el.switchBox) {
@@ -1681,22 +1728,29 @@ var RECORDER = (function () {
         node = node.parentNode;
       }
       if (!b) return;
-      var name = b.getAttribute("data-name") || "";
-      if (el.speaker) el.speaker.value = name;
+      switchTo(b.getAttribute("data-name") || "");
+    });
+
+    // 直接在输入框里改名也算换人：高亮跟着走，识别中同样先把半句落给旧名
+    if (el.speaker) el.speaker.addEventListener("input", renderSwitch);
+    if (el.speaker) el.speaker.addEventListener("change", function () {
+      var now = speaker();
+      if (asrOn && prevSpeaker !== now) flushTo(prevSpeaker);
+      prevSpeaker = now;
       renderSwitch();
-      asrSay(name ? ("已换成 " + name + "：接下来识别到的话记到他名下") : "已换成「未标注」");
     });
 
     function ensureAsr() {
       if (asrCtl || typeof ASR === "undefined") return asrCtl;
       asrCtl = ASR.create({
-        lang: el.asrLang ? el.asrLang.value : ASR.DEFAULT_LANG,
-        local: !el.asrMode || el.asrMode.value !== "remote",
+        lang: asrLang(),
+        local: asrMode() !== "remote",
         idleMs: 1400,
         onText: function (r) { if (r && r.interim) asrSay("听到：" + r.interim); },
         onSegment: function (text) {
-          var who = speaker() || DEFAULT_SPEAKER;
+          var who = pendingWho != null ? pendingWho : (speaker() || DEFAULT_SPEAKER);
           if (submitText(text, who)) {
+            asrUsed = true;
             asrSay("落一行（" + who + "），共 " + state.turns.filter(function (t) { return !t.mark; }).length + " 条");
           }
         },
@@ -1712,10 +1766,16 @@ var RECORDER = (function () {
       return asrCtl;
     }
 
+    // 记录里是否用过识别：写进原稿备份与 meta，避免把识别结果记成人工录入
+    function asrState() {
+      if (!asrUsed) return null;
+      return { used: true, mode: asrMode(), lang: asrLang(), engine: typeof ASR !== "undefined" ? "Web Speech API " + ASR.VERSION : "Web Speech API" };
+    }
+
     // 端上语言包必须在用户手势里安装：这次点击本身就是手势，顺着点完就装
     function startAsr(a) {
-      a.setLang(el.asrLang ? el.asrLang.value : ASR.DEFAULT_LANG);
-      a.setLocal(!el.asrMode || el.asrMode.value !== "remote");
+      a.setLang(asrLang());
+      a.setLocal(asrMode() !== "remote");
       a.open().then(function (r) {
         if (r === "running") return;
         if (r === "need-install") {
@@ -1743,7 +1803,19 @@ var RECORDER = (function () {
         return;
       }
       if (asrOn) { a.stop(); return; }
+      prevSpeaker = speaker();
       startAsr(a);
+    });
+
+    // 识别中改语言：先停（顺带把半句按当前人落下），再按新语言重开，不能静默无效
+    if (el.asrLang) el.asrLang.addEventListener("change", function () {
+      var name = langLabel();
+      if (!asrOn) { asrSay("语言已选：" + name + "，点「语音识别」开始"); return; }
+      var a = ensureAsr();
+      if (!a) return;
+      a.stop();
+      asrSay("换了识别语言，正按「" + name + "」重开识别；已经识别的内容不受影响");
+      setTimeout(function () { if (!asrOn) startAsr(a); }, 400);
     });
 
     if (el.asrMode) el.asrMode.addEventListener("change", function () {
@@ -1772,6 +1844,7 @@ var RECORDER = (function () {
         turns: state.turns.slice(),
         audio: state.audio,
         audioType: state.audioType,
+        asr: asrState(),                          // null = 这段记录没用过识别
         text: el.preview ? el.preview.value : buildScript(state.turns)
       };
     }
@@ -1892,8 +1965,14 @@ var RECORDER = (function () {
     });
 
     function resetState() {
+      // 清空/载入别的记录时，把识别里还没落段的半句丢掉：
+      // 留着它，下一段话会把上一场会议的话带进新记录。
+      if (asrCtl) asrCtl.discard();
       state = { id: newId(), title: "", createdAt: Date.now(), turns: [], duration: 0, audio: null, audioType: "" };
       recordingStarted = false;
+      sessionAt = 0;
+      asrUsed = false;
+      prevSpeaker = "";
       if (el.title) el.title.value = "";
       if (el.time) el.time.textContent = "00:00";
       if (el.line) el.line.value = "";
@@ -1936,9 +2015,12 @@ var RECORDER = (function () {
     // 已存档 / 已下载过就放行，不要变成骚扰。
     if (typeof window !== "undefined" && typeof window.addEventListener === "function") {
       window.addEventListener("beforeunload", function (e) {
-        var hot = rec.isRecording() || rec.isPaused();
-        if (!hot && !dirty) return undefined;
-        var msg = hot ? "还在录音：关闭页面会丢掉这段音频" : "这段会议记录还没保存：关闭页面会丢掉";
+        var recHot = rec.isRecording() || rec.isPaused();
+        // 识别中关页面同样会丢掉「已经说了、还没到停顿」的那半句，属于要拦的情况
+        var asrHot = !!(asrCtl && asrCtl.isRunning());
+        if (!recHot && !asrHot && !dirty) return undefined;
+        var msg = recHot ? "还在录音：关闭页面会丢掉这段音频"
+          : (asrHot ? "还在识别：关闭页面会丢掉还没落段的那句话" : "这段会议记录还没保存：关闭页面会丢掉");
         e.preventDefault();
         e.returnValue = msg;
         return msg;
@@ -2393,6 +2475,7 @@ var MEDIA = (function () {
  *     网页里做可靠 diarization 需要预训练模型（几十 MB 起），单文件零外链做不到。
  *   - 因此本模块只负责「文字自动」：按停顿切段，落行时用当前说话人；
  *     谁在说由人一键切换（页面上的「换人」条），这是可靠做法，不假装自动。
+ *     换人时调用 flushNow()，把还没到停顿的半句先按原说话人落下，避免记到新人名下。
  *   - 真正自动区分说话人的是会议平台转写（飞书妙记 / 腾讯会议 / Teams），
  *     它们的逐字稿带说话人，导出后贴回本页即可。
  *
@@ -2403,7 +2486,7 @@ var MEDIA = (function () {
 var ASR = (function () {
   "use strict";
 
-  var VERSION = "1.0";
+  var VERSION = "1.1";
   var DEFAULT_LANG = "zh-CN";
   var LANGS = [
     { code: "zh-CN", label: "中文普通话" },
@@ -2461,21 +2544,28 @@ var ASR = (function () {
 
   /* ---------------- 切段：按停顿把连续文字分成一轮一轮 ---------------- */
 
+  var CJK = /[\u3000-\u303f\u4e00-\u9fff\uff00-\uffef]/;
+
+  // 拼接两段识别文字：中文直接相连，西文在词边界补一个空格。
+  // 不做这件事，浏览器把 "hello" / "world" 两次交给我们就粘成 "helloworld"。
+  function joinText(a, b) {
+    if (!a) return b || "";
+    if (!b) return a;
+    var left = a.charAt(a.length - 1), right = b.charAt(0);
+    if (CJK.test(left) || CJK.test(right)) return a + b;
+    if (/[A-Za-z0-9]$/.test(left) && /^[A-Za-z0-9]/.test(right)) return a + " " + b;
+    return a + b;
+  }
+
   // 浏览器只回文字流。按「静默 idleMs 毫秒」切段，段与段之间就是换人的地方。
   function createSegmenter(idleMs) {
     var gap = idleMs || 1400;
     var buf = "", lastAt = 0;
-    function norm(t) {
-      var s = String(t == null ? "" : t).trim();
-      if (!s) return "";
-      // 中文之间不加空格，西文之间补一个
-      return s;
-    }
     return {
       push: function (text, now) {
-        var t = norm(text);
+        var t = String(text == null ? "" : text).trim();
         if (!t) return null;
-        buf = buf ? buf + t : t;
+        buf = joinText(buf, t);
         lastAt = Number(now) || 0;
         return null;
       },
@@ -2498,6 +2588,11 @@ var ASR = (function () {
 
   /* ---------------- 识别器：一层薄封装，便于注入假对象做测试 ---------------- */
 
+  // 一分钟内允许的自动重启次数：Chrome 的连续识别静默后会 onend，
+  // 一场两小时的会重启上百次是正常的，所以按「近期频率」判异常，不设累计上限。
+  var RESTART_WINDOW_MS = 60000;
+  var RESTART_LIMIT = 8;
+
   function create(opts) {
     opts = opts || {};
     var win = opts.win || (typeof window !== "undefined" ? window : null);
@@ -2505,7 +2600,8 @@ var ASR = (function () {
     var lang = opts.lang || DEFAULT_LANG;
     var local = opts.local !== false;          // 默认端上
     var seg = createSegmenter(opts.idleMs);
-    var rec = null, running = false, restarts = 0, stoppedByUser = false, timer = null;
+    var rec = null, running = false, stoppedByUser = false, timer = null;
+    var restartAt = [];                        // 近一分钟的重启时间戳
 
     function hooks(name, arg) {
       if (typeof opts[name] === "function") { try { opts[name](arg); } catch (e) {} }
@@ -2552,7 +2648,7 @@ var ASR = (function () {
         for (i = e.resultIndex; i < e.results.length; i++) {
           res = e.results[i];
           var text = (res[0] && res[0].transcript) || "";
-          if (res.isFinal) finals += text; else interim += text;
+          if (res.isFinal) finals = joinText(finals, text); else interim = joinText(interim, text);
         }
         if (finals) {
           seg.push(finals, Date.now());
@@ -2573,8 +2669,15 @@ var ASR = (function () {
       rec.onend = function () {
         // 连续识别会被浏览器在静默后自动结束：只要用户没停，就接着起
         if (!running || stoppedByUser) { hooks("onState", "stopped"); return; }
-        if (restarts >= 30) { running = false; hooks("onError", "识别反复中断，已停下；可点「识别」重开"); hooks("onState", "stopped"); return; }
-        restarts += 1;
+        var now = Date.now();
+        restartAt = restartAt.filter(function (x) { return now - x < RESTART_WINDOW_MS; });
+        restartAt.push(now);
+        if (restartAt.length > RESTART_LIMIT) {
+          running = false;
+          hooks("onError", "识别反复中断（一分钟内重启 " + restartAt.length + " 次），已停下；多半是麦克风被别的程序抢走或识别服务不稳，点「语音识别」可重开");
+          hooks("onState", "stopped");
+          return;
+        }
         setTimeout(function () {
           if (!running) return;
           try { rec.start(); } catch (e) { running = false; hooks("onState", "stopped"); }
@@ -2588,7 +2691,7 @@ var ASR = (function () {
       }
       running = true;
       stoppedByUser = false;
-      restarts = 0;
+      restartAt = [];
       hooks("onState", local ? "listening-local" : "listening-remote");
       // 自己盯着停顿：浏览器不告诉我们“这句停了”，只能按时间判
       if (timer) clearInterval(timer);
@@ -2599,14 +2702,27 @@ var ASR = (function () {
       return Promise.resolve("running");
     }
 
+    // 把当前累积的半句立刻交付（换人、手动落行前调用）。失败也不能让识别停不下来。
+    function flushNow() {
+      var s = seg.flush();
+      if (s) hooks("onSegment", s);
+      return s;
+    }
+
+    // 丢弃当前累积的半句，不交付（清空记录、载入别的存档时用）
+    function discard() {
+      seg.flush();
+      return true;
+    }
+
     function stop() {
       stoppedByUser = true;
       running = false;
       if (timer) { clearInterval(timer); timer = null; }
-      var last = seg.flush();
-      if (last && typeof opts.onSegment === "function") opts.onSegment(last);
-      if (rec) { try { rec.stop(); } catch (e) {} }
+      flushNow();                       // 停下时把最后一句话交付，不吞掉
+      var r = rec;
       rec = null;
+      if (r) { try { r.stop(); } catch (e) {} }   // 无论回调是否抛错，麦克风一定要放掉
       hooks("onState", "stopped");
       return Promise.resolve(true);
     }
@@ -2621,6 +2737,8 @@ var ASR = (function () {
       open: open,
       start: function () { stoppedByUser = false; return start(); },
       stop: stop,
+      flushNow: flushNow,
+      discard: discard,
       setLang: setLang,
       setLocal: setLocal,
       isRunning: isRunning,
@@ -2638,6 +2756,7 @@ var ASR = (function () {
     localStatus: localStatus,
     installLocal: installLocal,
     errorText: errorText,
+    joinText: joinText,
     createSegmenter: createSegmenter,
     create: create
   };

@@ -170,7 +170,9 @@ var RECORDER = (function () {
       "# 记录时间：" + dateText(rec.createdAt),
       "# 时长：" + clock(rec.duration || 0),
       "# 说话人：" + (names.length ? names.join("、") : DEFAULT_SPEAKER),
-      "# 记录方式：" + (rec.audio ? "录音 + 速记（录音随包留档）" : "纯文字录入"),
+      "# 记录方式：" + (rec.audio ? "录音 + 速记（录音随包留档）" : "纯文字录入") +
+        (rec.asr && rec.asr.used ? "；其中含语音识别转写（" + (rec.asr.mode === "remote" ? "云端识别" : "端上识别") +
+          (rec.asr.lang ? "，" + rec.asr.lang : "") + "；识别只出文字，说话人由录入时手动切换）" : ""),
       "# 说明：本文件是原稿备份，时间码与说话人前缀照录入原样保留；识别结果照录，不补词、不改字。"
     ];
     var body = [];
@@ -205,7 +207,11 @@ var RECORDER = (function () {
       marks: (rec.turns || []).filter(function (t) { return t && t.mark; }).length,
       hasAudio: !!rec.audio,
       audioType: rec.audioType || "",
-      asr: false
+      // 记录里是否真的用过识别：溯源要用，不能像以前那样写死 false
+      asr: (rec.asr && rec.asr.used)
+        ? { used: true, mode: rec.asr.mode === "remote" ? "remote" : "local",
+            lang: rec.asr.lang || "", engine: rec.asr.engine || "" }
+        : false
     }, null, 2);
   }
 
@@ -653,8 +659,20 @@ var RECORDER = (function () {
       refreshFloat();
     }
 
+    // 会话计时：只识别、不录音的时候也必须有递增的时间码，
+    // 否则整篇都会是 [00:00:00]，看不出先后顺序。
+    // 录音中取录音时长；录音暂停时用会话时长兜底，避免时间码停在原地重复。
+    var sessionAt = 0;
+    function sessionElapsed() { return sessionAt ? (Date.now() - sessionAt) / 1000 : 0; }
+
     function currentAt() {
-      return recordingStarted ? rec.elapsed() : null;
+      if (recordingStarted) {
+        var byRec = rec.elapsed();
+        if (!sessionAt) sessionAt = Date.now() - byRec * 1000;
+        return Math.max(byRec, sessionElapsed());
+      }
+      if (!sessionAt) sessionAt = Date.now();
+      return sessionElapsed();
     }
 
     function submitLine() {
@@ -845,6 +863,9 @@ var RECORDER = (function () {
 
     // 浏览器只出文字，不区分说话人（没有声纹分离）；换人由人点一下，之后落行归到新名字。
     var asrCtl = null, asrOn = false;
+    var asrUsed = false;                              // 这段记录里是否真落过识别行（meta 溯源用）
+    var pendingWho = null;                            // 换人瞬间：还没落段的那半句归旧人
+    var prevSpeaker = "";
 
     function asrSay(text) { if (el.asrState) el.asrState.textContent = text || ""; }
 
@@ -852,6 +873,15 @@ var RECORDER = (function () {
       if (!el.asrBtn) return;
       el.asrBtn.textContent = on ? "停止识别" : "语音识别";
       el.asrBtn.setAttribute("aria-pressed", on ? "true" : "false");
+    }
+
+    function asrMode() { return (el.asrMode && el.asrMode.value === "remote") ? "remote" : "local"; }
+    function asrLang() { return (el.asrLang && el.asrLang.value) || (typeof ASR !== "undefined" ? ASR.DEFAULT_LANG : ""); }
+
+    function langLabel() {
+      var code = asrLang(), i, L = (typeof ASR !== "undefined" && ASR.LANGS) || [];
+      for (i = 0; i < L.length; i++) if (L[i].code === code) return L[i].label;
+      return code || "默认语言";
     }
 
     function renderSwitch() {
@@ -865,6 +895,23 @@ var RECORDER = (function () {
       el.switchBox.innerHTML = html;
     }
 
+    // 换人前把「已经说了但还没到停顿」的半句按旧说话人落下。
+    // 不这么做，那半句会跟着新名字进成稿——这是最容易出的错人。
+    function flushTo(who) {
+      if (!asrCtl) return;
+      pendingWho = who;
+      try { asrCtl.flushNow(); } finally { pendingWho = null; }
+    }
+
+    function switchTo(name) {
+      var before = speaker();
+      if (el.speaker) el.speaker.value = name;
+      if (asrOn && before !== name) flushTo(before);
+      prevSpeaker = name;
+      renderSwitch();
+      asrSay(name ? ("已换成 " + name + "：接下来识别到的话记到他名下") : "已换成「未标注」");
+    }
+
     if (el.switchBox) el.switchBox.addEventListener("click", function (e) {
       var node = e.target, b = null;
       while (node && node !== el.switchBox) {
@@ -872,22 +919,29 @@ var RECORDER = (function () {
         node = node.parentNode;
       }
       if (!b) return;
-      var name = b.getAttribute("data-name") || "";
-      if (el.speaker) el.speaker.value = name;
+      switchTo(b.getAttribute("data-name") || "");
+    });
+
+    // 直接在输入框里改名也算换人：高亮跟着走，识别中同样先把半句落给旧名
+    if (el.speaker) el.speaker.addEventListener("input", renderSwitch);
+    if (el.speaker) el.speaker.addEventListener("change", function () {
+      var now = speaker();
+      if (asrOn && prevSpeaker !== now) flushTo(prevSpeaker);
+      prevSpeaker = now;
       renderSwitch();
-      asrSay(name ? ("已换成 " + name + "：接下来识别到的话记到他名下") : "已换成「未标注」");
     });
 
     function ensureAsr() {
       if (asrCtl || typeof ASR === "undefined") return asrCtl;
       asrCtl = ASR.create({
-        lang: el.asrLang ? el.asrLang.value : ASR.DEFAULT_LANG,
-        local: !el.asrMode || el.asrMode.value !== "remote",
+        lang: asrLang(),
+        local: asrMode() !== "remote",
         idleMs: 1400,
         onText: function (r) { if (r && r.interim) asrSay("听到：" + r.interim); },
         onSegment: function (text) {
-          var who = speaker() || DEFAULT_SPEAKER;
+          var who = pendingWho != null ? pendingWho : (speaker() || DEFAULT_SPEAKER);
           if (submitText(text, who)) {
+            asrUsed = true;
             asrSay("落一行（" + who + "），共 " + state.turns.filter(function (t) { return !t.mark; }).length + " 条");
           }
         },
@@ -903,10 +957,16 @@ var RECORDER = (function () {
       return asrCtl;
     }
 
+    // 记录里是否用过识别：写进原稿备份与 meta，避免把识别结果记成人工录入
+    function asrState() {
+      if (!asrUsed) return null;
+      return { used: true, mode: asrMode(), lang: asrLang(), engine: typeof ASR !== "undefined" ? "Web Speech API " + ASR.VERSION : "Web Speech API" };
+    }
+
     // 端上语言包必须在用户手势里安装：这次点击本身就是手势，顺着点完就装
     function startAsr(a) {
-      a.setLang(el.asrLang ? el.asrLang.value : ASR.DEFAULT_LANG);
-      a.setLocal(!el.asrMode || el.asrMode.value !== "remote");
+      a.setLang(asrLang());
+      a.setLocal(asrMode() !== "remote");
       a.open().then(function (r) {
         if (r === "running") return;
         if (r === "need-install") {
@@ -934,7 +994,19 @@ var RECORDER = (function () {
         return;
       }
       if (asrOn) { a.stop(); return; }
+      prevSpeaker = speaker();
       startAsr(a);
+    });
+
+    // 识别中改语言：先停（顺带把半句按当前人落下），再按新语言重开，不能静默无效
+    if (el.asrLang) el.asrLang.addEventListener("change", function () {
+      var name = langLabel();
+      if (!asrOn) { asrSay("语言已选：" + name + "，点「语音识别」开始"); return; }
+      var a = ensureAsr();
+      if (!a) return;
+      a.stop();
+      asrSay("换了识别语言，正按「" + name + "」重开识别；已经识别的内容不受影响");
+      setTimeout(function () { if (!asrOn) startAsr(a); }, 400);
     });
 
     if (el.asrMode) el.asrMode.addEventListener("change", function () {
@@ -963,6 +1035,7 @@ var RECORDER = (function () {
         turns: state.turns.slice(),
         audio: state.audio,
         audioType: state.audioType,
+        asr: asrState(),                          // null = 这段记录没用过识别
         text: el.preview ? el.preview.value : buildScript(state.turns)
       };
     }
@@ -1083,8 +1156,14 @@ var RECORDER = (function () {
     });
 
     function resetState() {
+      // 清空/载入别的记录时，把识别里还没落段的半句丢掉：
+      // 留着它，下一段话会把上一场会议的话带进新记录。
+      if (asrCtl) asrCtl.discard();
       state = { id: newId(), title: "", createdAt: Date.now(), turns: [], duration: 0, audio: null, audioType: "" };
       recordingStarted = false;
+      sessionAt = 0;
+      asrUsed = false;
+      prevSpeaker = "";
       if (el.title) el.title.value = "";
       if (el.time) el.time.textContent = "00:00";
       if (el.line) el.line.value = "";
@@ -1127,9 +1206,12 @@ var RECORDER = (function () {
     // 已存档 / 已下载过就放行，不要变成骚扰。
     if (typeof window !== "undefined" && typeof window.addEventListener === "function") {
       window.addEventListener("beforeunload", function (e) {
-        var hot = rec.isRecording() || rec.isPaused();
-        if (!hot && !dirty) return undefined;
-        var msg = hot ? "还在录音：关闭页面会丢掉这段音频" : "这段会议记录还没保存：关闭页面会丢掉";
+        var recHot = rec.isRecording() || rec.isPaused();
+        // 识别中关页面同样会丢掉「已经说了、还没到停顿」的那半句，属于要拦的情况
+        var asrHot = !!(asrCtl && asrCtl.isRunning());
+        if (!recHot && !asrHot && !dirty) return undefined;
+        var msg = recHot ? "还在录音：关闭页面会丢掉这段音频"
+          : (asrHot ? "还在识别：关闭页面会丢掉还没落段的那句话" : "这段会议记录还没保存：关闭页面会丢掉");
         e.preventDefault();
         e.returnValue = msg;
         return msg;

@@ -5,6 +5,7 @@
  *     网页里做可靠 diarization 需要预训练模型（几十 MB 起），单文件零外链做不到。
  *   - 因此本模块只负责「文字自动」：按停顿切段，落行时用当前说话人；
  *     谁在说由人一键切换（页面上的「换人」条），这是可靠做法，不假装自动。
+ *     换人时调用 flushNow()，把还没到停顿的半句先按原说话人落下，避免记到新人名下。
  *   - 真正自动区分说话人的是会议平台转写（飞书妙记 / 腾讯会议 / Teams），
  *     它们的逐字稿带说话人，导出后贴回本页即可。
  *
@@ -15,7 +16,7 @@
 var ASR = (function () {
   "use strict";
 
-  var VERSION = "1.0";
+  var VERSION = "1.1";
   var DEFAULT_LANG = "zh-CN";
   var LANGS = [
     { code: "zh-CN", label: "中文普通话" },
@@ -73,21 +74,28 @@ var ASR = (function () {
 
   /* ---------------- 切段：按停顿把连续文字分成一轮一轮 ---------------- */
 
+  var CJK = /[\u3000-\u303f\u4e00-\u9fff\uff00-\uffef]/;
+
+  // 拼接两段识别文字：中文直接相连，西文在词边界补一个空格。
+  // 不做这件事，浏览器把 "hello" / "world" 两次交给我们就粘成 "helloworld"。
+  function joinText(a, b) {
+    if (!a) return b || "";
+    if (!b) return a;
+    var left = a.charAt(a.length - 1), right = b.charAt(0);
+    if (CJK.test(left) || CJK.test(right)) return a + b;
+    if (/[A-Za-z0-9]$/.test(left) && /^[A-Za-z0-9]/.test(right)) return a + " " + b;
+    return a + b;
+  }
+
   // 浏览器只回文字流。按「静默 idleMs 毫秒」切段，段与段之间就是换人的地方。
   function createSegmenter(idleMs) {
     var gap = idleMs || 1400;
     var buf = "", lastAt = 0;
-    function norm(t) {
-      var s = String(t == null ? "" : t).trim();
-      if (!s) return "";
-      // 中文之间不加空格，西文之间补一个
-      return s;
-    }
     return {
       push: function (text, now) {
-        var t = norm(text);
+        var t = String(text == null ? "" : text).trim();
         if (!t) return null;
-        buf = buf ? buf + t : t;
+        buf = joinText(buf, t);
         lastAt = Number(now) || 0;
         return null;
       },
@@ -110,6 +118,11 @@ var ASR = (function () {
 
   /* ---------------- 识别器：一层薄封装，便于注入假对象做测试 ---------------- */
 
+  // 一分钟内允许的自动重启次数：Chrome 的连续识别静默后会 onend，
+  // 一场两小时的会重启上百次是正常的，所以按「近期频率」判异常，不设累计上限。
+  var RESTART_WINDOW_MS = 60000;
+  var RESTART_LIMIT = 8;
+
   function create(opts) {
     opts = opts || {};
     var win = opts.win || (typeof window !== "undefined" ? window : null);
@@ -117,7 +130,8 @@ var ASR = (function () {
     var lang = opts.lang || DEFAULT_LANG;
     var local = opts.local !== false;          // 默认端上
     var seg = createSegmenter(opts.idleMs);
-    var rec = null, running = false, restarts = 0, stoppedByUser = false, timer = null;
+    var rec = null, running = false, stoppedByUser = false, timer = null;
+    var restartAt = [];                        // 近一分钟的重启时间戳
 
     function hooks(name, arg) {
       if (typeof opts[name] === "function") { try { opts[name](arg); } catch (e) {} }
@@ -164,7 +178,7 @@ var ASR = (function () {
         for (i = e.resultIndex; i < e.results.length; i++) {
           res = e.results[i];
           var text = (res[0] && res[0].transcript) || "";
-          if (res.isFinal) finals += text; else interim += text;
+          if (res.isFinal) finals = joinText(finals, text); else interim = joinText(interim, text);
         }
         if (finals) {
           seg.push(finals, Date.now());
@@ -185,8 +199,15 @@ var ASR = (function () {
       rec.onend = function () {
         // 连续识别会被浏览器在静默后自动结束：只要用户没停，就接着起
         if (!running || stoppedByUser) { hooks("onState", "stopped"); return; }
-        if (restarts >= 30) { running = false; hooks("onError", "识别反复中断，已停下；可点「识别」重开"); hooks("onState", "stopped"); return; }
-        restarts += 1;
+        var now = Date.now();
+        restartAt = restartAt.filter(function (x) { return now - x < RESTART_WINDOW_MS; });
+        restartAt.push(now);
+        if (restartAt.length > RESTART_LIMIT) {
+          running = false;
+          hooks("onError", "识别反复中断（一分钟内重启 " + restartAt.length + " 次），已停下；多半是麦克风被别的程序抢走或识别服务不稳，点「语音识别」可重开");
+          hooks("onState", "stopped");
+          return;
+        }
         setTimeout(function () {
           if (!running) return;
           try { rec.start(); } catch (e) { running = false; hooks("onState", "stopped"); }
@@ -200,7 +221,7 @@ var ASR = (function () {
       }
       running = true;
       stoppedByUser = false;
-      restarts = 0;
+      restartAt = [];
       hooks("onState", local ? "listening-local" : "listening-remote");
       // 自己盯着停顿：浏览器不告诉我们“这句停了”，只能按时间判
       if (timer) clearInterval(timer);
@@ -211,14 +232,27 @@ var ASR = (function () {
       return Promise.resolve("running");
     }
 
+    // 把当前累积的半句立刻交付（换人、手动落行前调用）。失败也不能让识别停不下来。
+    function flushNow() {
+      var s = seg.flush();
+      if (s) hooks("onSegment", s);
+      return s;
+    }
+
+    // 丢弃当前累积的半句，不交付（清空记录、载入别的存档时用）
+    function discard() {
+      seg.flush();
+      return true;
+    }
+
     function stop() {
       stoppedByUser = true;
       running = false;
       if (timer) { clearInterval(timer); timer = null; }
-      var last = seg.flush();
-      if (last && typeof opts.onSegment === "function") opts.onSegment(last);
-      if (rec) { try { rec.stop(); } catch (e) {} }
+      flushNow();                       // 停下时把最后一句话交付，不吞掉
+      var r = rec;
       rec = null;
+      if (r) { try { r.stop(); } catch (e) {} }   // 无论回调是否抛错，麦克风一定要放掉
       hooks("onState", "stopped");
       return Promise.resolve(true);
     }
@@ -233,6 +267,8 @@ var ASR = (function () {
       open: open,
       start: function () { stoppedByUser = false; return start(); },
       stop: stop,
+      flushNow: flushNow,
+      discard: discard,
       setLang: setLang,
       setLocal: setLocal,
       isRunning: isRunning,
@@ -250,6 +286,7 @@ var ASR = (function () {
     localStatus: localStatus,
     installLocal: installLocal,
     errorText: errorText,
+    joinText: joinText,
     createSegmenter: createSegmenter,
     create: create
   };
