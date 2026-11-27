@@ -321,6 +321,13 @@
     .panel table{min-width:0}
     tr{page-break-inside:avoid}
   }
+  /* 触摸目标修复：复选框本体 18px、所在点击区 ≥24px（触摸环境 44px）
+     依据：WCAG 2.2 SC 2.5.8 最小 24×24；页内触摸口径已统一到 44px */
+  input[type="checkbox"]{width:18px;height:18px;flex:none;accent-color:var(--accent);cursor:pointer}
+  .panel-head label.meta{min-height:24px}
+  @media (pointer:coarse){
+    .panel-head label.meta{min-height:44px}
+  }
 </style>
 </head>
 <body>

@@ -258,6 +258,13 @@
     section.out table{min-width:0}
     tr{page-break-inside:avoid}
   }
+  /* 触摸目标修复：复选框本体 18px、label 点击区 ≥24px（触摸环境 44px）
+     依据：WCAG 2.2 SC 2.5.8 最小 24×24；与页内 44px 触摸口径一致 */
+  input[type=checkbox]{width:18px;height:18px;flex:none;cursor:pointer}
+  label.chk{min-height:24px}
+  @media (pointer:coarse){
+    label.chk{min-height:44px}
+  }
 </style>
 </head>
 <body>
