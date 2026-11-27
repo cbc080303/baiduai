@@ -36,7 +36,7 @@
   header.top{position:sticky;top:0;z-index:20;background:rgba(255,255,255,.94);
     -webkit-backdrop-filter:saturate(160%) blur(8px);backdrop-filter:saturate(160%) blur(8px);
     border-bottom:1px solid var(--line)}
-  .wrap{max-width:1180px;margin:0 auto;padding:0 24px}
+  .wrap{max-width:1180px;margin:0 auto;padding:0 max(24px,env(safe-area-inset-right)) 0 max(24px,env(safe-area-inset-left))}
   .topbar{display:flex;align-items:center;gap:16px;height:58px}
   .brand{font-weight:650;letter-spacing:.2px;font-size:15px}
   .brand span{color:var(--faint);font-weight:400;margin-left:8px;font-size:12.5px}
