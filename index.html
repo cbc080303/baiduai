@@ -381,6 +381,32 @@
     .issue p,ul.bounds li{color:var(--ink)}
     .btn.primary,.btn[aria-pressed="true"]{background:#2d74a8;border-color:#2d74a8;color:#fff}
   }
+
+  /* ===== v3 输入区：粘进来先说“认成了什么、会按哪种口径比对”，再让人按下去跑
+     与工作台同一交互；只用令牌取色，浅色/深色/窄屏都不另写硬编码色 ===== */
+  .peek{margin:0;padding-left:10px;border-left:3px solid var(--line-strong);
+    font-size:12.5px;color:var(--muted);line-height:1.75}
+  .peek:empty{display:none}
+  .peek .kind{color:var(--ink);font-weight:600}
+  .peek .caliber{color:var(--accent-ink)}
+  .peek .dim{color:var(--faint)}
+  .peek.hit{border-left-color:var(--ok)}
+  .peek.warn{border-left-color:var(--p1)}
+  .kbd{font:11.5px/1.7 ui-monospace,SFMono-Regular,Consolas,monospace;color:var(--faint);
+    border:1px solid var(--line);border-radius:6px;padding:2px 6px}
+  body.dragging #check{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}
+  /* 窄屏：结果表的 560px 最小宽会把 grid 列撑开，连带把 textarea 与按钮拉到视口外。
+     让子项可收缩、只让宽表自己横滚，输入区才能整块留在屏内 */
+  #check > div{min-width:0}
+  #check-out{overflow-x:auto;-webkit-overflow-scrolling:touch}
+  #check-out table{min-width:520px}
+  @media (max-width:640px){
+    .peek{font-size:12px}
+    .kbd{font-size:11px}
+  }
+  @media print{
+    .kbd{display:none}
+  }
 </style>
 </head>
 <body>
@@ -508,12 +534,17 @@
         <div style="padding:14px 16px;display:grid;gap:10px">
           <label for="tr-input" class="meta">把材料粘到下面就行——人工整理的转录、录音转写稿（带时间码、没标点、夹“听不清”）都可以，格式不用管。系统自己判断形态、自己选口径，再逐条核对“原文依据”能否在转录里找到。纯字符串匹配，在本机完成，不调用模型、不发网络请求。</label>
           <textarea id="tr-input" rows="7" spellcheck="false" placeholder="张岚：……&#10;王睿：……"></textarea>
+          <p class="peek" id="tr-peek" aria-live="polite"></p>
           <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
             <button class="btn" id="load-sample">载入示例转录</button>
+            <button class="btn" id="tr-clip">从剪贴板粘贴</button>
+            <button class="btn" id="tr-file-btn">选择文件</button>
+            <input type="file" id="tr-file" accept=".txt,.md,.markdown,.csv,.tsv,.json,.vtt,.srt,.log" hidden>
             <button class="btn primary" id="run-check">核对原文依据（D）</button>
             <button class="btn accent" id="run-a">查遗漏候选（A）</button>
             <button class="btn" id="clear-check">清空</button>
             <span class="meta" id="check-summary" aria-live="polite"></span>
+            <span class="kbd" aria-hidden="true">Ctrl / ⌘ + Enter 直接跑</span>
           </div>
           <div id="check-out" class="meta" role="region" aria-label="依据校验结果">尚未校验。</div>
           <div id="a-out" class="meta" style="margin-top:6px">A 通道未运行。它只输出候选，不下“遗漏”结论。</div>
@@ -938,16 +969,122 @@ function runCheck(){
 
 document.getElementById("load-sample").addEventListener("click", () => {
   trInput.value = SAMPLE;
+  lastFileName = "";
+  peekTr();
   runCheck();
 });
 document.getElementById("run-check").addEventListener("click", runCheck);
 document.getElementById("clear-check").addEventListener("click", () => {
-  trInput.value = ""; summaryEl.textContent = "";
+  trInput.value = ""; summaryEl.textContent = ""; lastFileName = ""; peekTr();
   outEl.className = "meta"; outEl.textContent = "尚未校验。";
   const a = document.getElementById("a-out");
   if (a){ a.className = "meta"; a.textContent = "A 通道未运行。它只输出候选，不下“遗漏”结论。"; }
 });
-if (ignoreSpace) ignoreSpace.addEventListener("change", () => { if (trInput.value.trim()) runCheck(); });
+if (ignoreSpace) ignoreSpace.addEventListener("change", () => { peekTr(); if (trInput.value.trim()) runCheck(); });
+
+// ---------- 输入区：粘之前先说“认成了什么”，再说会按哪种口径比对 ----------
+// 只把 runCheck 已有的两条分支（去噪 / 严格逐字）讲清楚，不新增判定、不改数字口径
+const peekEl = document.getElementById("tr-peek");
+const ASR_FORM = { "timestamp+speaker": "时间码 + 说话人", "speaker": "说话人标记", "timestamp": "时间码" };
+let lastFileName = "";   // 拖入/选入的文件名：结果摘要会被 runCheck 覆盖，来源标注放在预览行
+
+function peekTr(){
+  if (!peekEl) return;
+  const raw = String(trInput.value || "");
+  if (!raw.trim()){ peekEl.textContent = ""; peekEl.className = "peek"; return; }
+  let asr = { is_asr: false, form: "plain", placeholder: 0 };
+  try { if (typeof A_CHANNEL !== "undefined" && A_CHANNEL.detectAsr) asr = A_CHANNEL.detectAsr(raw); } catch (e) {}
+  const rows = raw.split(/\r?\n/).filter(s => s.trim()).length;
+  const chars = raw.replace(/\s/g, "").length;
+  const strict = !(ignoreSpace && ignoreSpace.checked);
+  const caliber = strict
+    ? "严格逐字：空白、时间码、标点都不动"
+    : (asr.is_asr ? "自动适配：先去时间码、说话人前缀、识别占位与标点，再逐条比对"
+                  : "自动适配：只把连续空白折成一个，其余按原文");
+  const short = chars < 20;
+  peekEl.className = "peek " + (short ? "warn" : "hit");
+  peekEl.innerHTML = '<span class="kind">' + (asr.is_asr
+      ? "像录音转写稿（" + (ASR_FORM[asr.form] || asr.form) + "）"
+      : "像人工整理的转录") + "</span>" +
+    " · " + rows + " 行 · " + chars + " 字" +
+    (asr.placeholder ? " · " + asr.placeholder + " 处识别占位" : "") +
+    '<span class="caliber">　口径：' + caliber + "</span>" +
+    (short ? '<span class="dim">　内容太短，只有引句逐字出现才算命中</span>' : "") +
+    (lastFileName ? '<span class="dim">　来自 ' + esc(lastFileName) + "</span>" : "");
+}
+
+let peekTimer = null;
+trInput.addEventListener("input", () => {
+  if (peekTimer) clearTimeout(peekTimer);
+  lastFileName = "";   // 手动改动后不再标注来源文件
+  peekTimer = setTimeout(peekTr, 180);
+});
+trInput.addEventListener("keydown", e => {
+  if ((e.ctrlKey || e.metaKey) && e.key === "Enter"){ e.preventDefault(); runCheck(); }
+});
+
+document.getElementById("tr-clip").addEventListener("click", async () => {
+  try {
+    if (!navigator.clipboard || !navigator.clipboard.readText) throw new Error("no api");
+    const txt = await navigator.clipboard.readText();
+    if (!String(txt || "").trim()){ summaryEl.textContent = "剪贴板是空的。"; return; }
+    trInput.value = txt; peekTr();
+    summaryEl.textContent = "已从剪贴板粘进来，点「核对原文依据（D）」或按 Ctrl / ⌘ + Enter。";
+  } catch (e) {
+    summaryEl.textContent = "这个浏览器没允许读剪贴板：手动粘贴（Ctrl / ⌘ + V），或点「选择文件」。";
+  }
+});
+
+// 文件与拖拽：读成文本直接进框并跑一遍，不用先想“这该放哪个框”
+function readTrFile(f){
+  if (f && typeof f.text === "function") return f.text();
+  return new Promise((res, rej) => {
+    const r = new FileReader();
+    r.onload = () => res(String(r.result || ""));
+    r.onerror = () => rej(r.error || new Error("read fail"));
+    r.readAsText(f, "utf-8");
+  });
+}
+function takeTrFile(f){
+  readTrFile(f).then(txt => {
+    trInput.value = txt; lastFileName = f.name; peekTr();
+    summaryEl.textContent = "已读入 " + f.name + "，正在核对。";
+    runCheck();
+  }).catch(() => { summaryEl.textContent = "这个文件读不出来，换 .txt / .md / .vtt / .srt 再试。"; });
+}
+document.getElementById("tr-file-btn").addEventListener("click", () => document.getElementById("tr-file").click());
+document.getElementById("tr-file").addEventListener("change", e => {
+  const f = e.target && e.target.files && e.target.files[0];
+  if (f) takeTrFile(f);
+  if (e.target) e.target.value = "";
+});
+
+let dragTip = false;   // 悬停提示放预览行，不占用结果摘要位（那里要留给“共 N 条依据”）
+function dropTip(){
+  if (dragTip && peekEl){ peekEl.textContent = ""; peekEl.className = "peek"; dragTip = false; }
+}
+["dragenter", "dragover"].forEach(ev => document.addEventListener(ev, e => {
+  if (e.dataTransfer && Array.from(e.dataTransfer.types || []).indexOf("Files") >= 0){
+    e.preventDefault();
+    document.body.classList.add("dragging");
+    if (peekEl && !peekEl.textContent.trim()){
+      peekEl.className = "peek hit";
+      peekEl.innerHTML = '<span class="kind">松开就收</span> · 会读成转录，并立刻核对依据';
+      dragTip = true;
+    }
+  }
+}));
+["dragleave", "dragend"].forEach(ev => document.addEventListener(ev, e => {
+  if (!e.relatedTarget){ document.body.classList.remove("dragging"); dropTip(); }
+}));
+document.addEventListener("drop", e => {
+  const fs = Array.from((e.dataTransfer && e.dataTransfer.files) || []);
+  document.body.classList.remove("dragging"); dropTip();
+  if (!fs.length) return;
+  e.preventDefault();
+  if (fs.length > 1) summaryEl.textContent = "一次核对一份转录，先取第 1 份；其余可逐个再拖。";
+  takeTrFile(fs[0]);
+});
 
 // ---------- A 通道：按人切片查遗漏（与 qc_tools.py v1.7 slice_scan 逐条对拍一致） ----------
 const A_CHANNEL = (function(){
