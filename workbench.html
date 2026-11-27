@@ -75,7 +75,31 @@
   .classify{margin:18px 0 0;border:1px solid var(--line);background:#f8fafc;border-radius:var(--radius);padding:10px 14px;font-size:12.5px;color:var(--muted);line-height:1.7}
   .classify b{color:var(--ink);font-weight:650}
   .classify .k{color:var(--accent);font-weight:600}
-  #import-input{min-height:76px}
+  #import-input{min-height:132px}
+  /* 输入区：粘进来先说清“认成了什么”，再让人按下去跑 */
+  .peek{margin:8px 0 0;padding-left:10px;border-left:3px solid var(--line-strong);font-size:12.5px;color:var(--muted);line-height:1.7}
+  .peek:empty{display:none}
+  .peek .kind{color:var(--ink);font-weight:600}
+  .peek .dim{color:var(--faint)}
+  .peek.hit{border-left-color:var(--ok)}
+  .peek.miss{border-left-color:var(--p1)}
+  .peek.warn{border-left-color:var(--p2)}
+  .kbd{font:11.5px/1.7 ui-monospace,SFMono-Regular,Consolas,monospace;color:var(--faint);border:1px solid var(--line);border-radius:6px;padding:2px 6px}
+  body.dragging .import{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}
+  /* 输出面板：先一句结论，再按风险收窄 */
+  .verdict{display:flex;flex-wrap:wrap;gap:6px 16px;align-items:baseline;margin:22px 0 0;
+    padding:12px 14px;border:1px solid var(--line);border-left:3px solid var(--accent);
+    border-radius:var(--radius-sm);background:var(--card);font-size:13.5px;line-height:1.7}
+  .verdict b{font-weight:650}
+  .verdict .n{font-variant-numeric:tabular-nums;font-weight:650;color:var(--accent)}
+  .verdict .sep{color:var(--line-strong)}
+  .out h3 .cnt{margin-left:8px;font-size:12px;font-weight:500;color:var(--muted);
+    background:var(--line-soft);border:1px solid var(--line);border-radius:6px;padding:1px 7px;vertical-align:2px}
+  .out-filter{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 10px;align-items:center}
+  .out-filter .flabel{font-size:12px;color:var(--faint);margin-right:2px}
+  .fbtn{font:inherit;font-size:12.5px;padding:5px 10px;min-height:32px;border:1px solid var(--line-strong);
+    border-radius:999px;background:var(--card);color:var(--muted);cursor:pointer}
+  .fbtn[aria-pressed="true"]{background:var(--accent);border-color:var(--accent);color:#fff}
   .preflight{margin:22px 0 0;border:1px solid #f0d9b5;background:var(--p1-bg);color:#7a4a08;
     border-radius:var(--radius);padding:12px 14px;font-size:13px}
   .preflight h3{margin:0 0 6px;font-size:14px;font-weight:650;color:#5c3606}
@@ -168,6 +192,8 @@
     /* 识别行与换人条是后加控件：下拉框同样要 44px / 16px，否则 iOS 聚焦会放大整页 */
     select,.rec-asr select{min-height:44px;font-size:16px}
     .rec-switch button{min-height:44px;padding:9px 13px}
+    /* 分档筛选按钮是后加的 class，具体度高于通用 button，触摸下要单独抬到 44px */
+    .fbtn{min-height:44px;padding:9px 12px;font-size:13px}
   }
   @media (max-width:640px){
     .wrap{padding-left:max(18px,env(safe-area-inset-left));padding-right:max(18px,env(safe-area-inset-right))}
@@ -316,6 +342,8 @@
     .card .hint b{color:var(--ink)}
     button.primary,.rec-switch button.on,.card h2 .idx,.import h2 .idx,.rec h2 .idx{background:#2d74a8;border-color:#2d74a8;color:#fff}
     .rec-asr button[aria-pressed="true"]{background:#a8402f;border-color:#a8402f;color:#fff}
+    /* 筛选按钮按压态：亮 accent 作底 + 白字在深色下只有 2.56，压深一档到 5.0 以上 */
+    .fbtn[aria-pressed="true"]{background:#2d74a8;border-color:#2d74a8;color:#fff}
   }
 
   /* ===== 窄屏收口：v2 的桌面字号与内边距写在 640 断点之后，会把 24px 标题与 14px 卡片内边距盖回去。
@@ -359,13 +387,18 @@
 <div class="grid">
   <div class="card import" style="grid-column:1/-1">
     <h2><span class="idx" aria-hidden="true">0</span>把材料丢进来就行</h2>
-    <p class="hint">粘贴一段文字、拖入文件、或点「选择文件」（可多选）。系统会自己判断哪份是会议转录、哪份是待办表，放进下面两个框；两份齐了自动跑一遍。人工整理的稿子、录音转写稿、会议纪要都不用手工转换。</p>
+    <p class="hint">粘贴一段文字、拖入文件、或点「选择文件」（可多选）。系统会自己判断哪份是会议转录、哪份是待办表，放进下面两个框；两份齐了自动跑一遍。人工整理的稿子、录音转写稿、会议纪要都不用手工转换。<b>粘进来不用先想格式</b>——下面会先告诉你它认成了什么。</p>
     <textarea id="import-input" spellcheck="false" placeholder="把会议转录、录音转写稿、或待办表直接粘进这里……"></textarea>
+    <p class="peek" id="import-peek" aria-live="polite"></p>
     <div class="row">
       <button class="primary" id="import-run">分拣并跑</button>
+      <button id="import-clip">从剪贴板粘贴</button>
       <button id="import-file">选择文件</button>
+      <button id="import-sample">填入示例</button>
+      <button id="import-clear">清空</button>
       <input type="file" id="import-files" accept=".txt,.md,.markdown,.csv,.tsv,.json,.vtt,.srt" multiple hidden>
       <span class="status" id="import-status"></span>
+      <span class="kbd" aria-hidden="true">Ctrl / ⌘ + Enter 直接跑</span>
     </div>
   </div>
 
@@ -475,12 +508,13 @@
 <div class="actions"><div class="row">
   <button class="primary" id="run">跑质检</button>
   <button id="dl-md">下载报告 .md</button>
+  <button id="copy-md">复制报告</button>
   <button id="dl-csv">下载标注 .csv</button>
   <span class="status" id="status"></span>
 </div></div>
 
 <div id="result" role="region" aria-live="polite" aria-label="质检结果">
-  <div class="empty" id="placeholder">尚未运行。点「跑质检」，或先「载入样例」看一遍完整输出。</div>
+<div class="empty" id="placeholder"><b>还没有跑过。</b>把会议转录或待办表粘进上面的框（或点「填入示例」），粘贴后框下会先告诉你它认成了什么，再点「分拣并跑」——结果按依据回查、遗漏候选、字段与风险、软要求分成四段。</div>
 </div>
 
 <footer>
@@ -3363,6 +3397,17 @@ function render(ctx){
     h += "</ul></div>";
   }
 
+  // 结论先行：先给“查出几项、能不能直接用”，再看明细表
+  const needFix = bad.length + ctx.a.cands.length + ctx.readiness["需补字段"] + ctx.readiness["待人工判断"];
+  h += '<div class="verdict">';
+  h += '<span><b>本次查出</b> <span class="n">' + needFix + '</span> 项待处理</span>';
+  h += '<span class="sep">·</span><span>依据不匹配 <span class="n">' + bad.length + '</span></span>';
+  h += '<span class="sep">·</span><span>遗漏候选 <span class="n">' + ctx.a.cands.length + '</span></span>';
+  h += '<span class="sep">·</span><span>需补字段 <span class="n">' + ctx.readiness["需补字段"] + '</span></span>';
+  h += '<span class="sep">·</span><span>待人工判断 <span class="n">' + ctx.readiness["待人工判断"] + '</span></span>';
+  h += '<span class="sep">|</span><span>共 <b>' + ctx.rows.length + '</b> 条待办，可直接建单 <b>' + ctx.readiness["可直接建单"] + '</b></span>';
+  h += '</div>';
+
   h += '<div class="summary">';
   h += '<div class="kpi ' + (bad.length ? "bad" : "ok") + '"><div class="n">' + ctx.hit + "/" + ctx.checkable + '</div><div class="t">依据命中（可检）</div>' +
        (ctx.uncheckable ? '<div class="s">另 ' + ctx.uncheckable + " 条不可检</div>" : "") + '</div>';
@@ -3372,7 +3417,7 @@ function render(ctx){
   h += '<div class="kpi bad"><div class="n">' + ctx.readiness["待人工判断"] + '</div><div class="t">待人工判断</div></div>';
   h += '</div>';
 
-  h += '<section class="out"><h3>D 依据回查（命中 / 不匹配 / 不可检）</h3>';
+  h += '<section class="out"><h3>D 依据回查（命中 / 不匹配 / 不可检）<span class="cnt">命中 ' + ctx.hit + ' / 可检 ' + ctx.checkable + (ctx.uncheckable ? ' · 不可检 ' + ctx.uncheckable : '') + '</span></h3>';
   if (!ctx.rows.length){ h += '<div class="empty">待办表为空——先粘贴六列表，或点「载入样例」。</div>'; }
   else {
     h += '<table><thead><tr><th>编号</th><th>结果</th><th>原文依据</th></tr></thead><tbody>';
@@ -3388,7 +3433,7 @@ function render(ctx){
   }
   h += '</section>';
 
-  h += '<section class="out"><h3>A 按人切片候选</h3>';
+  h += '<section class="out"><h3>A 按人切片候选<span class="cnt">候选 ' + ctx.a.cands.length + (ctx.a.low.length ? ' · 低置信 ' + ctx.a.low.length : '') + '</span></h3>';
   if (ctx.a.warn) h += '<p class="note alert">' + esc(ctx.a.warn) + ' D 通道不受影响。</p>';
   if (!ctx.a.cands.length){
     h += '<p class="note">本次未产出候选。<b>候选 0 条不等于没问题</b>：覆盖判断按表内条目吸收同句动作，同句两件事可能被一条吸收，需人工再读一遍。</p>';
@@ -3407,12 +3452,20 @@ function render(ctx){
   }
   h += '</section>';
 
-  h += '<section class="out"><h3>C 字段完整性 + 风险分档</h3>';
+  h += '<section class="out"><h3>C 字段完整性 + 风险分档<span class="cnt">' + ctx.readiness["可直接建单"] + ' / ' + ctx.rows.length + ' 可直接建单</span></h3>';
   if (ctx.rows.length){
+    const p0 = ctx.items.filter(it => it.level === "P0").length;
+    const p1 = ctx.items.filter(it => it.level === "P1").length;
+    h += '<div class="out-filter" role="group" aria-label="按风险筛选待办"><span class="flabel">只看</span>' +
+         '<button class="fbtn" data-level="all" aria-pressed="true">全部 ' + ctx.items.length + '</button>' +
+         '<button class="fbtn" data-level="P0" aria-pressed="false">P0 必须改 ' + p0 + '</button>' +
+         '<button class="fbtn" data-level="P1" aria-pressed="false">P1 应补 ' + p1 + '</button>' +
+         '<button class="fbtn" data-level="P2" aria-pressed="false">P2/P3 低风险 ' + (ctx.items.length - p0 - p1) + '</button></div>';
     h += '<table><thead><tr><th>编号</th><th>字段状态</th><th>负责人线索</th><th>截止线索</th><th>风险</th><th>处置</th></tr></thead><tbody>';
     ctx.fields.forEach((f, i) => {
       const it = ctx.items[i];
-      h += '<tr><td class="num">' + esc(f["编号"]) + '</td><td>' + esc(f["字段状态"]) + '</td><td class="num">' + esc(f["负责人线索"]) + '</td><td class="num">' + esc(f["截止线索"]) + '</td><td class="num">' + it.risk + '</td><td><span class="' + (it.no_owner || it.soft ? "v-bad" : (it.no_due || it.shared ? "v-warn" : "v-ok")) + '">' + readiness(it) + '</span></td></tr>';
+      const lv = it.level === "P0" ? "P0" : (it.level === "P1" ? "P1" : "P2");
+      h += '<tr data-level="' + lv + '"><td class="num">' + esc(f["编号"]) + '</td><td>' + esc(f["字段状态"]) + '</td><td class="num">' + esc(f["负责人线索"]) + '</td><td class="num">' + esc(f["截止线索"]) + '</td><td class="num">' + it.level + " · " + it.risk + '</td><td><span class="' + (it.no_owner || it.soft ? "v-bad" : (it.no_due || it.shared ? "v-warn" : "v-ok")) + '">' + QC.readiness(it) + '</span></td></tr>';
     });
     h += '</tbody></table>';
   } else h += '<div class="empty">无待办数据。</div>';
@@ -3450,11 +3503,23 @@ function collect(){
 }
 
 $("run").addEventListener("click", () => {
-  const ctx = collect();
-  if (!ctx) return;
-  LAST = ctx;
-  $("status").textContent = "已跑完：" + ctx.rows.length + " 条待办，" + ctx.total + " 条依据（可检 " + ctx.checkable + "）。";
-  render(ctx);
+  const btn = $("run"), label = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = "跑着…";
+  // 用 setTimeout 让出一次：按钮先变「跑着…」再算。不用 rAF——后台标签或不可见页面里 rAF 会被暂停，点了像没反应
+  setTimeout(() => {
+    try {
+      const ctx = collect();
+      if (ctx){
+        LAST = ctx;
+        $("status").textContent = "已跑完：" + ctx.rows.length + " 条待办，" + ctx.total + " 条依据（可检 " + ctx.checkable + "）。";
+        render(ctx);
+      }
+    } finally {
+      btn.disabled = false;
+      btn.textContent = label;
+    }
+  });
 });
 
 $("load-sample").addEventListener("click", () => {
@@ -3466,7 +3531,7 @@ $("load-sample").addEventListener("click", () => {
 $("clear-all").addEventListener("click", () => {
   $("tr-input").value = ""; $("todo-input").value = ""; LAST = null;
   $("status").textContent = "";
-  $("result").innerHTML = '<div class="empty" id="placeholder">尚未运行。点「跑质检」，或先「载入样例」看一遍完整输出。</div>';
+  $("result").innerHTML = '<div class="empty" id="placeholder"><b>还没有跑过。</b>把材料粘进上面的框（或点「填入示例」），点「分拣并跑」即可；粘进来时框下会先告诉你它认成了什么。</div>';
 });
 
 $("pick-file").addEventListener("click", () => $("file-input").click());
@@ -3564,13 +3629,111 @@ async function intakeFiles(fs){
   else if (!cards.length && $("video-status")) $("video-status").textContent = "没有读到内容";
 }
 
-$("import-run").addEventListener("click", () => {
+// ---------- 输入区：粘之前先说“认成了什么”，再让人按下去跑 ----------
+const KIND_PEEK = {
+  transcript: "像会议转录", todo: "像待办表", subtitle: "像字幕文件",
+  unknown: "还没认出形态", empty: "空材料"
+};
+
+function peekImport(){
+  const el = $("import-peek");
+  if (!el) return;
   const t = $("import-input").value;
-  const parts = String(t || "").split(/\n{3,}/).filter(s => s.trim());
+  if (!String(t || "").trim()){ el.textContent = ""; el.className = "peek"; return; }
+  const rows = String(t).split(/\r?\n/).filter(s => s.trim());
+  const chars = String(t).replace(/\s/g, "").length;
+  let kind = "unknown";
+  try {
+    if (window.SUBTITLE && SUBTITLE.detect(t).is_subtitle) kind = "subtitle";
+    else kind = A_CHANNEL.classifyMaterial(t).kind;
+  } catch (e) { kind = "unknown"; }
+  let extra = " · " + rows.length + " 行 · " + chars + " 字";
+  if (kind === "todo"){
+    const cols = (rows[0] || "").split(/[,\t]/).filter(s => s.trim()).length;
+    extra = " · " + rows.length + " 行 · 首行 " + cols + " 列";
+  }
+  const miss = kind === "unknown";
+  el.className = "peek " + (miss ? "miss" : "hit");
+  el.innerHTML = '<span class="kind">' + (KIND_PEEK[kind] || esc(kind)) + "</span>" + extra +
+    (miss ? '<span class="dim">　贴整段转录或六列待办表，识别更准</span>' : "");
+}
+
+function importRun(){
+  const t = $("import-input").value;
+  const st = $("import-status");
+  if (!String(t || "").trim()){
+    if (st) st.textContent = "先粘点内容，或点「填入示例」看一遍完整跑法。";
+    return;
+  }
+  const parts = String(t).split(/\n{3,}/).filter(s => s.trim());
   importMany(parts.length > 1
     ? parts.map((s, i) => ({name: "第 " + (i + 1) + " 段", text: s}))
     : [{name: "粘贴内容", text: t}]);
   $("import-input").value = "";
+  peekImport();
+}
+
+let peekTimer = null;
+$("import-input").addEventListener("input", () => {
+  if (peekTimer) clearTimeout(peekTimer);
+  peekTimer = setTimeout(peekImport, 180);
+});
+$("import-input").addEventListener("keydown", e => {
+  if ((e.ctrlKey || e.metaKey) && e.key === "Enter"){ e.preventDefault(); importRun(); }
+});
+$("import-run").addEventListener("click", importRun);
+
+$("import-clip").addEventListener("click", async () => {
+  const st = $("import-status");
+  try {
+    if (!navigator.clipboard || !navigator.clipboard.readText) throw new Error("no api");
+    const txt = await navigator.clipboard.readText();
+    if (!String(txt || "").trim()){ if (st) st.textContent = "剪贴板是空的。"; return; }
+    $("import-input").value = txt;
+    peekImport();
+    if (st) st.textContent = "已从剪贴板粘进来，点「分拣并跑」或按 Ctrl / ⌘ + Enter。";
+  } catch (e) {
+    if (st) st.textContent = "这个浏览器没允许读剪贴板：手动粘贴（Ctrl / ⌘ + V），或点「选择文件」。";
+  }
+});
+
+$("import-sample").addEventListener("click", () => {
+  $("import-input").value = SAMPLE_TR + "\n\n\n" + SAMPLE_TODO;   // 两段材料，走同一分拣路径
+  peekImport();
+  importRun();
+});
+
+$("import-clear").addEventListener("click", () => {
+  $("import-input").value = "";
+  peekImport();
+  if ($("import-status")) $("import-status").textContent = "";
+  if ($("status")) $("status").textContent = "";
+});
+
+// C 段按风险收窄：只切可见性，不改数据、不改判定
+$("result").addEventListener("click", e => {
+  const b = e.target && e.target.closest ? e.target.closest(".fbtn") : null;
+  if (!b) return;
+  const level = b.getAttribute("data-level");
+  const box = b.parentNode, sec = box.parentNode;
+  Array.from(box.querySelectorAll(".fbtn")).forEach(x => x.setAttribute("aria-pressed", x === b ? "true" : "false"));
+  Array.from(sec.querySelectorAll("tbody tr")).forEach(tr => {
+    tr.hidden = level !== "all" && tr.getAttribute("data-level") !== level;
+  });
+});
+
+$("copy-md").addEventListener("click", async () => {
+  const ctx = LAST || collect(); if (!ctx) return; LAST = ctx;
+  const md = QC.report(ctx);
+  const btn = $("copy-md"), old = btn.textContent;
+  try {
+    if (!navigator.clipboard || !navigator.clipboard.writeText) throw new Error("no api");
+    await navigator.clipboard.writeText(md);
+    btn.textContent = "已复制";
+  } catch (e) {
+    btn.textContent = "复制失败，请用下载";
+  }
+  setTimeout(() => { btn.textContent = old; }, 1800);
 });
 
 $("import-file").addEventListener("click", () => $("import-files").click());
@@ -3592,14 +3755,25 @@ $("tr-file").addEventListener("change", async e => {
   if (e.target) e.target.value = "";
 });
 
-// 拖到页面任意位置都收：不用先想“这该放哪个框”
+// 拖到页面任意位置都收：不用先想“这该放哪个框”；拖进来时给一次看得见的反馈
 ["dragenter", "dragover"].forEach(ev => document.addEventListener(ev, e => {
-  if (e.dataTransfer && Array.from(e.dataTransfer.types || []).indexOf("Files") >= 0) e.preventDefault();
+  if (e.dataTransfer && Array.from(e.dataTransfer.types || []).indexOf("Files") >= 0){
+    e.preventDefault();
+    document.body.classList.add("dragging");
+    const st = $("import-status");
+    if (st && !st.textContent) st.textContent = "松开就收：会自动认形态、放进对应的框、跑一遍。";
+  }
+}));
+["dragleave", "dragend"].forEach(ev => document.addEventListener(ev, e => {
+  if (!e.relatedTarget) document.body.classList.remove("dragging");
 }));
 document.addEventListener("drop", async e => {
   const fs = Array.from((e.dataTransfer && e.dataTransfer.files) || []);
+  document.body.classList.remove("dragging");
   if (!fs.length) return;
   e.preventDefault();
+  const st = $("import-status");
+  if (st) st.textContent = "收到 " + fs.length + " 份：" + fs.map(f => f.name).join("、");
   await intakeFiles(fs);
 });
 
