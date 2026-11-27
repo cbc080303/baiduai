@@ -183,6 +183,11 @@
     section.out{overflow-x:auto;-webkit-overflow-scrolling:touch}
     section.out table{min-width:560px}
     .open-strip{font-size:13px}
+    /* 记录卡在窄屏：flex 子项默认 min-width:auto，会把 select 按最长选项顶宽，卡片被撑出屏幕。
+       这里放开收缩、让下拉独占一行，320px 下卡片不再超出可用宽度。 */
+    .rec-row>*,.rec-asr>*,.rec-controls>*,.row>*{min-width:0}
+    .rec-asr select,.rec-store #rec-list{flex:1 1 100%;width:100%;max-width:100%}
+    #rec-mark-note,#rec-list{min-width:0}
   }
   @media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
 
@@ -311,6 +316,20 @@
     .card .hint b{color:var(--ink)}
     button.primary,.rec-switch button.on,.card h2 .idx,.import h2 .idx,.rec h2 .idx{background:#2d74a8;border-color:#2d74a8;color:#fff}
     .rec-asr button[aria-pressed="true"]{background:#a8402f;border-color:#a8402f;color:#fff}
+  }
+
+  /* ===== 窄屏收口：v2 的桌面字号与内边距写在 640 断点之后，会把 24px 标题与 14px 卡片内边距盖回去。
+     这里在样式表末尾重新声明移动端取值，并按窄屏重新收紧节奏。 ===== */
+  @media (max-width:640px){
+    .hero{padding:26px 0 18px}
+    h1{font-size:24px;line-height:1.3;letter-spacing:-.2px;margin-bottom:12px}
+    .lede{font-size:15px}
+    .card{padding:14px}
+    .grid{gap:14px;margin-top:22px}
+    section.out{margin-top:26px}
+    .open-strip{margin-top:14px;line-height:1.7}
+    .open-strip span{overflow-wrap:anywhere}
+    .kpi .n{font-size:26px}
   }
 </style>
 </head>
