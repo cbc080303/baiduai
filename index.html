@@ -1175,7 +1175,9 @@ function runCheck(){
     (miss ? `<p class="meta" style="margin:10px 0 0">不匹配通常三个原因：转录被“智能润色”改过、表内依据被概括改写，或录音识别把话听成了别的词——这正是 D 维度要抓的东西。状态写「近似 · 差 N 字」的先核那几处，多半是同音错字，别直接当成依据被改写。</p>` : "");
 // 字段来源 + 依据定位 + 回执：这是市场同类产品都没有的一层（它们只给最终字段和音频跳转）
   const meta = groups.flatMap(([label, items]) => items.map(([id, quote, owner, due, task]) => ({id: id, label: label, owner: owner, due: due, quote: quote, task: task})));
-  const ls = splitLines(SAMPLE);
+  // 用「当前粘贴的转录」切句，不是用内置示例：粘自己的会时必须算自己的句，
+// 否则依据定位会落在示例稿上——那是假证据，比没有更坏。
+  const ls = splitLines(raw);
   const graded = meta.map(m => {
     const s = ownerSource(m.owner, m.quote, ls);
     const loc = locateLine(ls, String(m.quote || "").split("／")[0]);
@@ -1213,7 +1215,7 @@ function runCheck(){
   window.__DEMO_RECEIPT = {
     schema: "meeting-todo-qc/receipt@1", tool: "会议待办质检器 · 演示页 v3.0",
     generated_at: new Date().toISOString(),
-    transcript: {chars: keepChars(SAMPLE).length, lines: ls.length, fp: fnv1a(ls.map(l => l.norm).join(""))},
+    transcript: {chars: keepChars(raw).length, lines: ls.length, fp: fnv1a(ls.map(l => l.norm).join(""))},
     stats: {items: graded.length, hit: hit, near: nearN, bad: miss},
     items: graded.map(g => ({id: String(g.id), task: g.task, owner: g.owner, due: g.due,
       source: {code: g.code, label: SRC_LABEL[g.code] || g.code, why: g.why},
@@ -1234,7 +1236,7 @@ outEl.addEventListener("click", e => {
   const b = e.target && e.target.closest ? e.target.closest("button") : null;
   if (!b || b.id !== "btn-receipt-demo") return;
   if (!window.__DEMO_RECEIPT){ b.textContent = "先跑一次核对"; return; }
-  downloadBlob("质检回执_示例.json", JSON.stringify(window.__DEMO_RECEIPT, null, 2), "application/json;charset=utf-8");
+  downloadBlob("质检回执.json", JSON.stringify(window.__DEMO_RECEIPT, null, 2), "application/json;charset=utf-8");
 });
 document.getElementById("clear-check").addEventListener("click", () => {
   trInput.value = ""; summaryEl.textContent = ""; lastFileName = ""; peekTr();
