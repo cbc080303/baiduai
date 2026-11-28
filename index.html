@@ -151,6 +151,14 @@
   .v-warn{color:var(--p1);background:var(--p1-bg);border-color:#f0d9b8}
   .v-bad{color:var(--p0);background:var(--p0-bg);border-color:#f2c7c2}
   .near-hint{margin-top:4px;font-size:11.8px;line-height:1.6;color:var(--muted)}
+  /* v3.0：字段来源与依据定位 */
+  .src-block{margin-top:14px;padding-top:12px;border-top:1px dashed var(--line-strong)}
+  .src-block h4{margin:0 0 6px;font-size:14px}
+  .src-kpi{font-size:13px;color:var(--muted);margin-bottom:6px}
+  .src-kpi b{color:var(--ink);font-size:15px}
+  .src-list{margin:6px 0 0;padding-left:18px;font-size:13px;line-height:1.75}
+  .src-list li{margin-bottom:4px}
+  .fp{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12px;letter-spacing:.03em}
   .meta{color:var(--muted);font-size:12.5px}
 
   .issues{display:grid;grid-template-columns:repeat(2,1fr);gap:12px}
@@ -991,6 +999,88 @@ const outEl = document.getElementById("check-out");
 const norm = s => ignoreSpace && ignoreSpace.checked ? s.replace(/\s+/g, "") : s;
 const splitQuote = q => q.split("／").map(x => x.trim()).filter(Boolean);
 
+// ---------- v3.0：字段来源与依据定位（与工作台同口径，纯本地计算） ----------
+// 市场同类产品只给「最终负责人」，不给「这个负责人是从哪句话来的」；也只给音频跳转，
+// 不给可离线复核的依据定位。这两件是页面最该露出来的东西。
+const keepChars = s => String(s == null ? "" : s).replace(/\s+/g, "").replace(/[。！？；，、：,.!?;:]/g, "");
+function fnv1a(str){
+  let h = 0x811c9dc5;
+  const s = String(str == null ? "" : str);
+  for (let i = 0; i < s.length; i++){ h ^= s.charCodeAt(i); h = Math.imul(h, 16777619) >>> 0; }
+  return ("0000000" + h.toString(16)).slice(-8);
+}
+function splitLines(raw){
+  const out = [];
+  String(raw || "").split(/\r?\n/).forEach(ln => {
+    let s = ln.trim();
+    if (!s) return;
+    s = s.replace(/^[\[\(【]?\d{1,3}:\d{2}(?::\d{2})?[\]\)】]?\s*/, "");
+    const m = s.match(/^([^\s：:，。；]{1,12})[：:](.*)$/);
+    let sp = "", body = s;
+    if (m){ sp = m[1]; body = m[2].trim(); }
+    if (!body) return;
+    out.push({speaker: sp, text: body, norm: keepChars(body)});
+  });
+  return out;
+}
+function covLen(a, b){
+  if (!a || !b) return 0;
+  let prev = new Array(b.length + 1).fill(0);
+  for (let i = 1; i <= a.length; i++){
+    const cur = new Array(b.length + 1).fill(0);
+    for (let j = 1; j <= b.length; j++){
+      cur[j] = (a[i - 1] === b[j - 1]) ? prev[j - 1] + 1 : Math.max(prev[j], cur[j - 1]);
+    }
+    prev = cur;
+  }
+  return prev[b.length];
+}
+function locateLine(ls, quote){
+  const q = keepChars(String(quote || "").replace(/^[^\s：:，。；]{1,12}[：:]\s*/, ""));
+  if (!q || !ls.length) return null;
+  let best = null;
+  ls.forEach((l, i) => {
+    if (!l.norm) return;
+    const cover = covLen(l.norm, q);
+    if (!best || cover > best.cover) best = {i: i, cover: cover, line: l};
+  });
+  if (!best || !best.cover) return null;
+  return {line: best.i + 1, speaker: best.line.speaker || "未标注", cover: best.cover,
+          ratio: Math.round(best.cover / q.length * 100) / 100, fp: fnv1a(best.line.norm)};
+}
+const SELF_RE = /(我来|我负责|我这边|我处理|我发|我盯|我排|我拉|我写|我跟|我确认|我搞定|我安排|我出|我接)/;
+const ASSIGN_RE = /(负责|牵头|跟进|配合|来做|盯一下|去谈|安排给|交给你|你盯|你把|你去|你来|你出|你排|你拉|你先|你确|你补)/;
+const SRC_LABEL = {self: "本人认领", assigned: "他人指派", mention: "仅提及", absent: "原文无此人", none: "原文无线索", suggest: "原文有认领"};
+const SRC_CLS = {self: "v-ok", assigned: "tag", mention: "v-warn", absent: "v-bad", none: "v-bad", suggest: "v-warn"};
+function ownerSource(owner, quote, ls){
+  const raw0 = String(owner || "").trim();
+  // 「赵敏（主）／陈晨（配合）」这类主配写法取主责人，与工作台同口径
+  const o = raw0.split(/[／/]/)[0].replace(/[（(].*?[）)]/g, "").trim();
+  const loc = locateLine(ls, String(quote || "").split("／")[0]);
+  const line = loc ? ls[loc.line - 1] : null;
+  const text = line ? line.text : "";
+  if (isPending(o) || !o) return {code: "none", why: "字段留待确认；依据句与前后各一句都没有人当场认领"};
+  if (line && line.speaker === o && SELF_RE.test(text))
+    return {code: "self", why: "第 " + loc.line + " 句由 " + o + " 本人说出，句内有「我来/我拉」这类认领"};
+  if (line && text.includes(o)){
+    const called = text.indexOf(o) === 0 || new RegExp("(^|[。！？；，,、\\s])" + o + "([，,：:]|$)").test(text);
+    if (called || ASSIGN_RE.test(text)) return {code: "assigned", why: "第 " + loc.line + " 句由 " + line.speaker + " 点名 " + o + "，句内是派活动作"};
+    return {code: "mention", why: "第 " + loc.line + " 句出现 " + o + "，但既无认领也无指派，仅凭出现不足以认定责任"};
+  }
+  if (ls.some(l => l.speaker === o && SELF_RE.test(l.text)))
+    return {code: "self", why: o + " 在另一句里本人认领过，但这一条依据句里没有这个名字"};
+  return {code: "absent", why: "整篇示例转录里没有 " + o + "，责任人来自表外"};
+}
+function downloadBlob(name, text, mime){
+  const blob = new Blob([text], {type: mime || "text/plain;charset=utf-8"});
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = name;
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 0);
+}
+
 function runCheck(){
   const raw = trInput.value.trim();
   if (!raw){
@@ -1038,7 +1128,7 @@ function runCheck(){
     }
     return prev[b.length];
   }
-  const groups = [["生成版", GEN.map(r => [r[0], r[5]])], ["修正版", REV.map(r => [r[0], r[5]])]];
+  const groups = [["生成版", GEN.map(r => [r[0], r[5], r[2], r[3], r[1]])], ["修正版", REV.map(r => [r[0], r[5], r[2], r[3], r[1]])]];
   let total = 0, hit = 0, nearN = 0;
   const rows = [];
   groups.forEach(([label, items]) => {
@@ -1083,6 +1173,53 @@ function runCheck(){
     <thead><tr><th scope="col">编号</th><th scope="col">版本</th><th scope="col">结果</th><th scope="col">原文依据</th></tr></thead>
     <tbody>${rows.join("")}</tbody></table>` +
     (miss ? `<p class="meta" style="margin:10px 0 0">不匹配通常三个原因：转录被“智能润色”改过、表内依据被概括改写，或录音识别把话听成了别的词——这正是 D 维度要抓的东西。状态写「近似 · 差 N 字」的先核那几处，多半是同音错字，别直接当成依据被改写。</p>` : "");
+// 字段来源 + 依据定位 + 回执：这是市场同类产品都没有的一层（它们只给最终字段和音频跳转）
+  const meta = groups.flatMap(([label, items]) => items.map(([id, quote, owner, due, task]) => ({id: id, label: label, owner: owner, due: due, quote: quote, task: task})));
+  const ls = splitLines(SAMPLE);
+  const graded = meta.map(m => {
+    const s = ownerSource(m.owner, m.quote, ls);
+    const loc = locateLine(ls, String(m.quote || "").split("／")[0]);
+    return {id: m.id, label: m.label, owner: m.owner, due: m.due, quote: m.quote, task: m.task,
+            code: s.code, why: s.why, loc: loc};
+  });
+  const cntSrc = k => graded.filter(g => g.code === k).length;
+  const risky = graded.filter(g => g.code === "mention" || g.code === "absent" || g.code === "none");
+  const dupes = [];
+  for (let i = 0; i < graded.length; i++){
+    for (let j = i + 1; j < graded.length; j++){
+      if (graded[i].label !== graded[j].label) continue;
+      const a = keepChars(graded[i].task), b = keepChars(graded[j].task);
+      if (!a || !b) continue;
+      const ratio = covLen(a, b) / Math.max(a.length, b.length);
+      if (ratio >= 0.6 && graded[i].owner && graded[i].owner === graded[j].owner && !isPending(graded[i].owner))
+        dupes.push("#" + graded[i].id + " 与 #" + graded[j].id + "（同一负责人 " + graded[i].owner + "，任务重合 " + Math.round(ratio * 100) + "%）");
+    }
+  }
+  let src = '<div class="src-block"><h4>字段来源 · 依据定位（可复核）</h4>' +
+    '<div class="src-kpi">本人认领 <b>' + cntSrc("self") + '</b> · 他人指派 <b>' + cntSrc("assigned") +
+    '</b> · 仅提及 <b>' + cntSrc("mention") + '</b> · 无依据 <b>' + (cntSrc("absent") + cntSrc("none")) + '</b></div>';
+  if (risky.length){
+    src += '<ul class="src-list">' + risky.slice(0, 8).map(g =>
+      '<li>#' + esc(g.id) + '（' + esc(g.label) + '）<b>' + esc(g.owner || "待确认") + '</b>：' + esc(g.why) + '</li>').join("") +
+      (risky.length > 8 ? '<li>另 ' + (risky.length - 8) + ' 条同类，见工作台完整表</li>' : "") + '</ul>';
+  } else {
+    src += '<p class="meta">本次每一条责任人都能在依据句里找到认领或指派动作。</p>';
+  }
+  if (dupes.length) src += '<p class="meta">疑似重复：' + dupes.join("；") + '</p>';
+  src += '<p class="meta fp">每条依据钉到「第几句 · 谁说的 · 8 位指纹」：' +
+    graded.slice(0, 3).map(g => '#' + esc(g.id) + ' 第' + (g.loc ? g.loc.line : "?") + "句/" + esc(g.loc ? g.loc.speaker : "未定位") + "/" + esc(g.loc ? g.loc.fp : "—")).join("　") + ' …</p>' +
+    '<button class="btn" id="btn-receipt-demo" type="button">导出质检回执（示例数据）</button></div>';
+  outEl.innerHTML += src;
+  window.__DEMO_RECEIPT = {
+    schema: "meeting-todo-qc/receipt@1", tool: "会议待办质检器 · 演示页 v3.0",
+    generated_at: new Date().toISOString(),
+    transcript: {chars: keepChars(SAMPLE).length, lines: ls.length, fp: fnv1a(ls.map(l => l.norm).join(""))},
+    stats: {items: graded.length, hit: hit, near: nearN, bad: miss},
+    items: graded.map(g => ({id: String(g.id), task: g.task, owner: g.owner, due: g.due,
+      source: {code: g.code, label: SRC_LABEL[g.code] || g.code, why: g.why},
+      evidence: {line: g.loc ? g.loc.line : 0, speaker: g.loc ? g.loc.speaker : "", fp: g.loc ? g.loc.fp : "", quote: g.quote}})),
+    findings: dupes
+  };
 }
 
 document.getElementById("load-sample").addEventListener("click", () => {
@@ -1092,6 +1229,13 @@ document.getElementById("load-sample").addEventListener("click", () => {
   runCheck();
 });
 document.getElementById("run-check").addEventListener("click", runCheck);
+// 回执导出：结果面板每次都重建，按钮用委托接
+outEl.addEventListener("click", e => {
+  const b = e.target && e.target.closest ? e.target.closest("button") : null;
+  if (!b || b.id !== "btn-receipt-demo") return;
+  if (!window.__DEMO_RECEIPT){ b.textContent = "先跑一次核对"; return; }
+  downloadBlob("质检回执_示例.json", JSON.stringify(window.__DEMO_RECEIPT, null, 2), "application/json;charset=utf-8");
+});
 document.getElementById("clear-check").addEventListener("click", () => {
   trInput.value = ""; summaryEl.textContent = ""; lastFileName = ""; peekTr();
   outEl.className = "meta"; outEl.textContent = "尚未校验。";
@@ -1709,11 +1853,43 @@ if (runABtn) runABtn.addEventListener("click", runA);
     if (trInput.value.trim() && ignoreSpace && ignoreSpace.checked) runCheck();
   }
 
+  // v2.1 碎片合并：同一个人、上一行 ≤6 字、间隔 ≤4 s、本段 ≤20 字时并进上一行，
+// 与工作台同一口径。合并只改文字、不动时间码，也不增加「已定稿句数」。
+  let lastLine = null;            // { at: 秒, who, text, node }
+  function mergeIntoLast(body, w, atSec){
+    if (!lastLine || lastLine.who !== w) return false;
+    if (String(lastLine.text).length > 6 || body.length > 20) return false;
+    if (!(atSec >= lastLine.at && atSec - lastLine.at <= 4)) return false;
+    lastLine.text = (lastLine.text + "、" + body).replace(/、+/g, "、");
+    lastLine.at = atSec;
+    const node = lastLine.node;
+    if (node){
+      const tx = node.querySelector(".txt");
+      if (tx) tx.textContent = lastLine.text;
+      const tm = node.querySelector(".t");
+      if (tm) tm.textContent = "[" + mmss(atSec * 1000) + "]";
+    }
+    const cur = String(trInput.value || "").replace(/\s+$/, "");
+    if (cur){
+      const arr = cur.split("\n");
+      arr[arr.length - 1] = "[" + mmss(atSec * 1000) + "] " + w + "：" + lastLine.text;
+      trInput.value = arr.join("\n");
+    }
+    lastFileName = "";
+    peekTr();
+    if (trInput.value.trim() && ignoreSpace && ignoreSpace.checked) runCheck();
+    bodyEl.scrollTop = bodyEl.scrollHeight;
+    setMeta();
+    return true;
+  }
+
   function addLine(text, whoName){
     const body = String(text || "").replace(/\s+/g, " ").trim();
     if (!body) return;
     const w = whoName || whoNow();
-    const t = mmss(Date.now() - (t0 || Date.now()));
+    const atSec = (Date.now() - (t0 || Date.now())) / 1000;
+    if (mergeIntoLast(body, w, atSec)) return;
+    const t = mmss(atSec * 1000);
     const p = document.createElement("p");
     p.className = "live-line";
     p.innerHTML = '<span class="t">[' + t + ']</span><span class="who">' + escL(w) + '：</span>' +
@@ -1727,6 +1903,7 @@ if (runABtn) runABtn.addEventListener("click", runA);
     count++;
     setMeta();
     appendDoc("[" + t + "] " + w + "：" + body);
+    lastLine = { at: atSec, who: w, text: body, node: p };
   }
 
   function stopTick(){ if (tick){ clearInterval(tick); tick = null; } }
@@ -1739,6 +1916,7 @@ if (runABtn) runABtn.addEventListener("click", runA);
       rec = null;
     }
     mode = "";
+    lastLine = null;          // 换一轮会话不跨轮合并
     setInterim("");
     stopTick();
     setBtn();

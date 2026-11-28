@@ -131,6 +131,13 @@
   .v-warn{display:inline-block;font-size:12px;padding:1px 8px;border-radius:6px;color:var(--p1);background:var(--p1-bg)}
 
   .note{font-size:13px;color:var(--muted);margin:10px 0 0}
+  /* v3.0：字段来源与依据定位 —— 指纹用等宽字，方便逐位对照；回执区两栏在窄屏折行 */
+  .fp{font:12px/1.5 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:var(--muted);letter-spacing:.04em}
+  .rcpt{margin-top:12px;padding-top:10px;border-top:1px dashed var(--line-soft,var(--line))}
+  .rcpt-bar{display:flex;flex-wrap:wrap;gap:8px}
+  .rcpt textarea{width:100%;margin-top:8px;box-sizing:border-box;font:13px/1.6 ui-monospace,Menlo,Consolas,monospace;
+    border:1px solid var(--line);border-radius:8px;padding:8px 10px;background:var(--card,#fff);color:inherit;resize:vertical}
+  .rcpt #receipt-out{white-space:pre-wrap;margin-top:8px}
   .note.alert{background:var(--p1-bg);border:1px solid #f0d9b5;color:#7a4a08;padding:10px 12px;border-radius:8px}
   .note b{color:var(--ink)}
   .empty{color:var(--muted);font-size:13px;padding:12px 0}
@@ -3513,6 +3520,8 @@ const QC = (function(){
     L.push("\n组织处理顺序（风险高在前）：\n\n");
     const order = ctx.items.slice().sort((x, y) => y.risk - x.risk);
     L.push(mdTable(["编号", "任务", "风险", "处置"], order.map(it => ({"编号": it["编号"], "任务": it["任务"], "风险": it.risk, "处置": readiness(it)}))));
+    const G2 = graded(ctx);
+    const FD2 = findings(ctx.rows, splitLines(ctx.raw), ctx.quotes);
     L.push("## 四、边界与口径\n\n");
     L.push("- 本报告由确定性规则产出：D 为字符串匹配，A 为规则切片，C 为字段与线索匹配；B（误提）与语义判断不在本工具内。\n");
     L.push("- 依据为空（缺列或空串）标「不可检」，不计入命中率分母，也不按「依据不可追溯」扣风险分——无法检查不等于检查失败。\n");
@@ -3521,6 +3530,17 @@ const QC = (function(){
     if (!(ctx.names || []).length) L.push("- 转录缺少「参会人：」行，A 通道未启用：按人切片需要先知道谁在会里。\n");
     L.push("- 「可直接执行」（四要件齐全）与「可直接建单」（能直接建进任务系统）不是一回事，本报告按后者分档。\n");
     L.push("- 不带准确率与 Kappa：样本量不足时不构成统计估计，只有条目级计数。\n");
+    L.push("\n## 五、字段来源与可复核回执\n\n");
+    L.push(mdTable(["编号", "负责人", "来源", "依据定位", "指纹"],
+      G2.map(g => ({"编号": g.编号, "负责人": g.负责人 || "—", "来源": g.来源,
+                    "依据定位": g.定位, "指纹": g.指纹 || "—"}))));
+    L.push("- 来源说明：**本人认领**＝依据句由本人说出且句内有「我来」类认领；**他人指派**＝他人点名派活；**仅提及**＝名字出现但无认领也无指派；**原文无此人**＝整篇没这个名字。\n");
+    L.push("- 回执口径：每条依据钉到「第几句 · 说话人 · 字符偏移 · 8 位指纹」，配合转录原文可离线重算；`QC.verifyReceipt()` 重算并报出被改动的条目。回执只是复核凭据，不构成准确率或统计估计。\n\n");
+    if (FD2.length){
+      L.push(mdTable(["类型", "涉及", "说明"], FD2.map(f => ({"类型": f.type, "涉及": "#" + f.ids.join("、#"), "说明": f.why}))));
+    } else {
+      L.push("未发现同句多条、疑似重复、同句字段打架三类结构问题。\n\n");
+    }
     return L.join("");
   }
 
@@ -3540,9 +3560,203 @@ const QC = (function(){
     return "\ufeff" + out;
   }
 
+  // ---------- v3.0：字段来源分级 · 依据定位指纹 · 重复与冲突 · 回执 ----------
+  // 市面上的会议 AI 都停在「生成」侧：给最终字段、给音频跳转。没有一家回答
+  // 「这个负责人是从哪句话来的」「这条依据能不能离线复核」。这一段补的是那一层。
+  function keepChars(s){
+    return squeeze(String(s == null ? "" : s)).replace(/[。！？；，、：,.!?;:]/g, "");
+  }
+
+  function splitLines(raw){
+    const out = [];
+    String(raw || "").split(/\r?\n/).forEach(ln => {
+      let s = ln.trim();
+      if (!s) return;
+      s = s.replace(/^[\[\(【]?\d{1,3}:\d{2}(?::\d{2})?[\]\)】]?\s*/, "");
+      const m = s.match(/^([^\s：:，。；]{1,12})[：:](.*)$/);
+      let sp = "", body = s;
+      if (m){ sp = m[1]; body = m[2].trim(); }
+      if (!body) return;
+      out.push({speaker: sp, text: body, norm: keepChars(body)});
+    });
+    return out;
+  }
+
+  // FNV-1a 32 位，输出 8 位十六进制。够用来做「同一句」的指纹，不用于安全。
+  function fnv1a(str){
+    let h = 0x811c9dc5;
+    const s = String(str == null ? "" : str);
+    for (let i = 0; i < s.length; i++){
+      h ^= s.charCodeAt(i);
+      h = Math.imul(h, 16777619) >>> 0;
+    }
+    return ("0000000" + h.toString(16)).slice(-8);
+  }
+
+  // 把一条依据钉到「第几句、谁说的、字符偏移、指纹」上。
+  function locate(ls, quote){
+    const q = keepChars(String(quote || "").replace(/^[^\s：:，。；]{1,12}[：:]\s*/, ""));
+    if (!q || !ls.length) return null;
+    let best = null;
+    ls.forEach((l, i) => {
+      if (!l.norm) return;
+      const cover = commonCover(l.norm, q);
+      if (!best || cover > best.cover) best = {i: i, cover: cover, line: l};
+    });
+    if (!best || !best.cover) return null;
+    const blk = longestCommonBlock(best.line.norm, q);
+    return {line: best.i + 1, speaker: best.line.speaker || "未标注",
+            off: Math.max(0, blk.bi), cover: best.cover,
+            ratio: Math.round(best.cover / q.length * 100) / 100,
+            fp: fnv1a(best.line.norm), text: best.line.text};
+  }
+
+  const SELF_RE = /(我来|我负责|我这边|我处理|我发|我盯|我排|我拉|我写|我跟|我确认|我搞定|我安排|我出|我接)/;
+  // 指派不只靠动词：「王睿，你把……拉出来」「李思远，本周五前修完」这种点名到人的句子，
+// 中文里常常没有「负责」二字。所以除了动词表，还要认「名字在句首或紧随逗号被点名」。
+  const ASSIGN_RE = /(负责|牵头|跟进|配合|来做|盯一下|去谈|安排给|交给你|你盯|你把|你去|你来|你出|你排|你拉|你先|你确|你补)/;
+
+  // 负责人四态：本人认领 / 他人指派 / 仅提及 / 原文无此人；字段空时只给「原文有认领」建议，不替用户填。
+  function ownerGrade(row, ls, names){
+    const owner = String(row["负责人"] || "").trim();
+    const parts = String(row["原文依据"] || "").split(/[｜＋+]/).map(s => s.trim()).filter(Boolean);
+    const loc = parts.length ? locate(ls, parts[0]) : null;
+    const idx = loc ? loc.line - 1 : -1;
+    const line = idx >= 0 ? ls[idx] : null;
+    const text = line ? line.text : "";
+    if (MISSING.has(owner)){
+      let near = [];
+      if (idx >= 0) for (let k = Math.max(0, idx - 1); k <= Math.min(ls.length - 1, idx + 1); k++) if (ls[k]) near.push({k: k, l: ls[k]});
+      if (!near.length) near = ls.slice(0, 3).map((l, k) => ({k: k, l: l}));
+      const claim = near.find(x => SELF_RE.test(x.l.text) && x.l.speaker);
+      if (claim) return {grade: "suggest", label: "原文有认领，待你确认",
+        why: "第 " + (claim.k + 1) + " 句「" + claim.l.speaker + "：" + claim.l.text + "」是当场认领，负责人可填 " + claim.l.speaker,
+        suggest: claim.l.speaker};
+      return {grade: "none", label: "原文无线索", why: "依据句与前后各一句都没有「我来/我负责」这类认领，也没有点名指派"};
+    }
+    const nm = (names || []).find(x => x && owner.includes(x)) || owner.replace(/[（(].*?[）)]/g, "").trim();
+    if (line && line.speaker === nm && SELF_RE.test(text))
+      return {grade: "self", label: "本人认领", why: "第 " + loc.line + " 句由 " + nm + " 本人说出，句内有「我来/我拉」这类认领动作，依据句正是他本人的话"};
+    if (line && text.includes(nm)){
+      // 「李思远，本周五前修完」这类中文点名句没有「负责」二字，靠「名字被逗号/句号点出」认指派
+      const called = text.indexOf(nm) === 0 || new RegExp("(^|[。！？；，,、\\s])" + nm + "([，,：:]|$)").test(text);
+      if (called || ASSIGN_RE.test(text))
+        return {grade: "assigned", label: "他人指派", why: "第 " + loc.line + " 句由 " + line.speaker + " 点名 " + nm + "，句内是派活/确认完成的动作"};
+      return {grade: "mention", label: "仅提及", why: "第 " + loc.line + " 句出现 " + nm + "，但句内既无认领也无指派——仅凭出现不能认定责任"};
+    }
+    const selfLine = ls.findIndex(l => l.speaker === nm && SELF_RE.test(l.text));
+    if (selfLine >= 0)
+      return {grade: "self", label: "本人认领（另一句）", why: "第 " + (selfLine + 1) + " 句由 " + nm + " 本人认领，但这一条的依据句里没有这个名字"};
+    if (ls.some(l => l.text.includes(nm)))
+      return {grade: "mention", label: "仅提及（另一句）", why: "姓名出现在别处，依据句里没有——跨句拼出来的责任人要人工确认"};
+    return {grade: "absent", label: "原文无此人", why: "整篇转录都没出现 " + nm + "：要么脱敏改了名，要么这个责任人来自表外"};
+  }
+
+  function lineOfQuotes(rows, quotes, ls){
+    const map = {};
+    quotes.forEach(q => {
+      if (!q.checkable) return;
+      const parts = String(q.quote || "").split(/[｜＋+]/).map(s => s.trim()).filter(Boolean);
+      const l = parts.length ? locate(ls, parts[0]) : null;
+      if (l) map[String(q["编号"])] = l;
+    });
+    return map;
+  }
+
+  // 三类结构问题：同句多条、疑似重复、同句字段打架。都不下结论，只标出来让人看。
+  function findings(rows, ls, quotes){
+    const out = [];
+    const map = lineOfQuotes(rows, quotes, ls);
+    const byLine = {};
+    Object.keys(map).forEach(id => { (byLine[map[id].line] = byLine[map[id].line] || []).push(id); });
+    Object.keys(byLine).forEach(k => {
+      const ids = byLine[k];
+      if (ids.length > 1)
+        out.push({type: "同句多条", ids: ids, why: "第 " + k + " 句被 " + ids.length + " 条待办同时引用：同句两件事时，覆盖判断会把第二件吸收掉"});
+      const outs = ids.map(id => rows.find(r => String(r["编号"]) === String(id)) || {});
+      const dues = outs.map(r => String(r["截止时间"] || "").trim()).filter(v => v && !MISSING.has(v));
+      if (new Set(dues).size > 1)
+        out.push({type: "截止冲突", ids: ids, why: "同一依据句给出两个不同截止：" + Array.from(new Set(dues)).join(" / ")});
+      const owners = outs.map(r => String(r["负责人"] || "").trim()).filter(v => v && !MISSING.has(v));
+      if (new Set(owners).size > 1)
+        out.push({type: "负责人冲突", ids: ids, why: "同一依据句给出两个不同负责人：" + Array.from(new Set(owners)).join(" / ")});
+    });
+    for (let i = 0; i < rows.length; i++){
+      for (let j = i + 1; j < rows.length; j++){
+        const a = keepChars(rows[i]["任务"]), b = keepChars(rows[j]["任务"]);
+        if (!a || !b) continue;
+        const ratio = commonCover(a, b) / Math.max(a.length, b.length);
+        const oa = String(rows[i]["负责人"] || "").trim(), ob = String(rows[j]["负责人"] || "").trim();
+        if (ratio >= 0.6 && !MISSING.has(oa) && oa === ob)
+          out.push({type: "疑似重复", ids: [rows[i]["编号"], rows[j]["编号"]],
+                    why: "同一负责人 " + oa + "，两条任务文字重合 " + Math.round(ratio * 100) + "%，可能是同一件事登了两次"});
+      }
+    }
+    return out;
+  }
+
+  function graded(ctx){
+    const ls = splitLines(ctx.raw);
+    return ctx.rows.map((r, i) => {
+      const g = ownerGrade(r, ls, ctx.names);
+      const parts = String(r["原文依据"] || "").split(/[｜＋+]/).map(s => s.trim()).filter(Boolean);
+      const loc = parts.length ? locate(ls, parts[0]) : null;
+      return {编号: r["编号"], 任务: r["任务"], 负责人: r["负责人"],
+              来源: g.label, 来源码: g.grade, 来源说明: g.why,
+              定位: loc ? ("第 " + loc.line + " 句 · " + loc.speaker + " · 字符 " + loc.off) : "未定位",
+              指纹: loc ? loc.fp : "", 覆盖: loc ? loc.ratio : 0,
+              就绪: readiness(ctx.items[i])};
+    });
+  }
+
+  function receipt(ctx){
+    const ls = splitLines(ctx.raw);
+    const items = ctx.rows.map((r, i) => {
+      const parts = String(r["原文依据"] || "").split(/[｜＋+]/).map(s => s.trim()).filter(Boolean);
+      const loc = parts.length ? locate(ls, parts[0]) : null;
+      const og = ownerGrade(r, ls, ctx.names);
+      return {id: String(r["编号"]), task: String(r["任务"] || ""),
+              owner: String(r["负责人"] || ""), owner_grade: og.grade, owner_why: og.why || "",
+              due: String(r["截止时间"] || ""),
+              evidence: {line: loc ? loc.line : 0, speaker: loc ? loc.speaker : "",
+                         offset: loc ? loc.off : -1, fp: loc ? loc.fp : "",
+                         quote: String(r["原文依据"] || "")},
+              readiness: readiness(ctx.items[i])};
+    });
+    return {schema: "meeting-todo-qc/receipt@1", tool: "会议待办质检器 v3.0",
+            generated_at: new Date().toISOString(),
+            transcript: {chars: keepChars(ctx.raw).length, lines: ls.length,
+                         fp: fnv1a(ls.map(l => l.norm).join(""))},
+            stats: {items: ctx.rows.length, checkable: ctx.checkable, hit: ctx.hit,
+                    near: ctx.quotes.filter(q => q.checkable && q.near).length,
+                    bad: hitBad(ctx).length, uncheckable: ctx.uncheckable,
+                    ready: ctx.readiness["可直接建单"]},
+            items: items, findings: findings(ctx.rows, ls, ctx.quotes)};
+  }
+
+  // 回执校验：重算转录指纹与每条依据的定位/指纹，回答「这份表和当初质检的是不是同一份」。
+  function verifyReceipt(obj, raw){
+    const ls = splitLines(raw);
+    const fp = fnv1a(ls.map(l => l.norm).join(""));
+    const items = Array.isArray(obj && obj.items) ? obj.items : [];
+    const bad = [];
+    items.forEach(it => {
+      const rec = it.evidence || {};
+      const l = locate(ls, String(rec.quote || it.task || ""));
+      if (!l) bad.push({id: it.id, why: "依据句在这份转录里定位不到"});
+      else if (rec.fp && rec.fp !== l.fp) bad.push({id: it.id, why: "第 " + rec.line + " 句 → 现为第 " + l.line + " 句，内容指纹不一致"});
+      else if (Number(rec.line) && Number(rec.line) !== l.line) bad.push({id: it.id, why: "定位从第 " + rec.line + " 句变为第 " + l.line + " 句"});
+    });
+    return {transcript_fp: fp,
+            transcript_ok: (obj && obj.transcript && obj.transcript.fp) ? (obj.transcript.fp === fp) : null,
+            items: items.length, ok: items.length - bad.length, bad: bad};
+  }
+
   return {parseRows: parseRows, checkQuotes: checkQuotes, fieldCheck: fieldCheck,
           buildItems: buildItems, readiness: readiness, preflight: preflight,
-          run: run, report: report, csv: csv};
+          run: run, report: report, csv: csv,
+          splitLines: splitLines, fnv1a: fnv1a, locate: locate, ownerGrade: ownerGrade,
+          findings: findings, graded: graded, receipt: receipt, verifyReceipt: verifyReceipt};
 })();
 /*==ENGINE-END==*/
 
@@ -3667,6 +3881,35 @@ function render(ctx){
     });
     h += '</tbody></table>';
   } else h += '<div class="empty">无待办数据。</div>';
+  h += '</section>';
+
+  const G = QC.graded(ctx);
+  const LS = QC.splitLines(ctx.raw);
+  const FD = QC.findings(ctx.rows, LS, ctx.quotes);
+  const cntOf = k => G.filter(g => g.来源码 === k).length;
+  const bcls = g => ({"self": "v-ok", "assigned": "tag", "mention": "v-warn", "absent": "v-bad", "none": "v-bad", "suggest": "v-warn"})[g] || "tag";
+  h += '<section class="out"><h3>F 字段来源与依据定位（可复核）<span class="cnt">本人认领 ' + cntOf("self") + ' · 他人指派 ' + cntOf("assigned") +
+       ' · 仅提及 ' + cntOf("mention") + ' · 无依据 ' + (cntOf("absent") + cntOf("none") + cntOf("suggest")) + '</span></h3>';
+  if (!ctx.rows.length){ h += '<div class="empty">无待办数据。</div>'; }
+  else {
+    h += '<table><thead><tr><th>编号</th><th>负责人</th><th>来源</th><th>依据定位</th><th>指纹</th></tr></thead><tbody>';
+    G.forEach(g => {
+      h += '<tr><td class="num">' + esc(g.编号) + '</td><td>' + esc(g.负责人 || "—") + '</td><td><span class="' + bcls(g.来源码) + '">' + esc(g.来源) + '</span></td><td class="num">' + esc(g.定位) + '</td><td class="fp">' + esc(g.指纹 || "—") + '</td></tr>';
+    });
+    h += '</tbody></table>';
+    h += '<p class="note">来源只看字段旁边那句话：<b>本人认领</b>是他自己说「我来」；<b>他人指派</b>是别人点名派活；<b>仅提及</b>只是名字出现，不足以认定责任。竞品只给最终责任人，不给这一层——责任人错在哪儿，靠这个判断。</p>';
+    if (FD.length){
+      h += '<table style="margin-top:8px"><thead><tr><th>类型</th><th>涉及</th><th>为什么值得看</th></tr></thead><tbody>';
+      FD.forEach(f => { h += '<tr><td><span class="v-warn">' + esc(f.type) + '</span></td><td class="num">#' + f.ids.map(i => esc(i)).join("、#") + '</td><td>' + esc(f.why) + '</td></tr>'; });
+      h += '</tbody></table>';
+    } else {
+      h += '<p class="note">未发现同句多条、疑似重复、同句字段打架。这不等于没有问题，只说明这三类结构问题没出现。</p>';
+    }
+    h += '<div class="rcpt"><div class="rcpt-bar"><button class="btn" id="btn-receipt" type="button">导出质检回执 .json</button>' +
+         '<button class="btn" id="btn-verify" type="button">校验回执</button></div>' +
+         '<textarea id="receipt-in" rows="3" spellcheck="false" placeholder="把导出的回执 JSON 粘到这里，点「校验回执」：会重算转录指纹和每条依据的定位与指纹，告诉你哪几条对不上。"></textarea>' +
+         '<div id="receipt-out" class="meta">回执是一份可离线复核的凭据：每条待办钉到「第几句 · 谁说的 · 字符偏移 · 指纹」，换个浏览器、换台电脑都能重算。</div></div>';
+  }
   h += '</section>';
 
   if (ctx.soft.length){
@@ -3992,6 +4235,36 @@ $("dl-md").addEventListener("click", () => {
 $("dl-csv").addEventListener("click", () => {
   const ctx = LAST || collect(); if (!ctx) return; LAST = ctx;
   download("质检标注.csv", QC.csv(ctx), "text/csv;charset=utf-8");
+});
+
+// 回执两颗按钮在 render() 生成的 HTML 里，用委托接：结果面板每跑一次会重建。
+$("result").addEventListener("click", e => {
+  const b = e.target && e.target.closest ? e.target.closest("button") : null;
+  if (!b) return;
+  if (b.id === "btn-receipt"){
+    const ctx = LAST || collect(); if (!ctx) return; LAST = ctx;
+    const r = QC.receipt(ctx);
+    download("质检回执.json", JSON.stringify(r, null, 2), "application/json;charset=utf-8");
+    const out = $("receipt-out");
+    if (out) out.textContent = "已导出：转录指纹 " + r.transcript.fp + "（" + r.transcript.lines + " 句 / " + r.transcript.chars + " 字）｜" +
+      r.items.length + " 条待办、结构问题 " + r.findings.length + " 项。";
+    return;
+  }
+  if (b.id === "btn-verify"){
+    const out = $("receipt-out"), box = $("receipt-in");
+    const txt = (box && box.value || "").trim();
+    if (!txt){ if (out) out.textContent = "先把回执 JSON 粘进上面的框，再点校验。"; return; }
+    let obj;
+    try { obj = JSON.parse(txt); } catch (err){ if (out) out.textContent = "这不是合法 JSON：" + err.message; return; }
+    const ctx = LAST || collect();
+    if (!ctx){ if (out) out.textContent = "校验需要当前的转录原文：先把转录与待办表粘回上面再跑一次，然后回来校验。"; return; }
+    const v = QC.verifyReceipt(obj, ctx.raw);
+    let s = "回执 " + v.items + " 条，一致 " + v.ok + " 条，对不上 " + v.bad.length + " 条。转录指纹 " +
+      (v.transcript_ok === null ? "回执里没有，跳过" : (v.transcript_ok ? "一致" : "**不一致**（这份转录与回执生成时不是同一份）"));
+    if (v.bad.length) s += "\n" + v.bad.map(x => "  #" + x.id + "：" + x.why).join("\n");
+    if (out) out.textContent = s;
+    return;
+  }
 });
 </script>
 </body>
