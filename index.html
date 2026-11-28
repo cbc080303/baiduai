@@ -148,7 +148,9 @@
   .verdict{display:inline-flex;align-items:center;gap:5px;font-size:11.8px;padding:2px 8px;
     border-radius:6px;border:1px solid}
   .v-ok{color:var(--ok);background:var(--ok-bg);border-color:#bfe3cf}
+  .v-warn{color:var(--p1);background:var(--p1-bg);border-color:#f0d9b8}
   .v-bad{color:var(--p0);background:var(--p0-bg);border-color:#f2c7c2}
+  .near-hint{margin-top:4px;font-size:11.8px;line-height:1.6;color:var(--muted)}
   .meta{color:var(--muted);font-size:12.5px}
 
   .issues{display:grid;grid-template-columns:repeat(2,1fr);gap:12px}
@@ -1004,29 +1006,83 @@ function runCheck(){
   const base = asr.is_asr ? A_CHANNEL.asrNormalize(raw) : raw;
   const text = norm(base);
   const denoise = q => asr.is_asr ? q.replace(/[。！？；，、：,.!?;:]/g, "") : q;
+  // v2.0 近似命中：整条命不中时，算「最长公共连续片段」——识别同音错字、漏一个字会让
+  // 逐字比对整条崩掉。覆盖依据 60% 以上记「近似 · 差 N 字」，仍不算合格，只提示先核这几个字。
+  function lcbLen(a, b){
+    if (!a || !b) return { len: 0, bi: 0 };
+    let best = 0, bestB = 0, prev = new Array(b.length + 1).fill(0);
+    for (let i = 1; i <= a.length; i++){
+      const cur = new Array(b.length + 1).fill(0);
+      for (let j = 1; j <= b.length; j++){
+        if (a[i - 1] === b[j - 1]){
+          const v = prev[j - 1] + 1;
+          cur[j] = v;
+          if (v > best){ best = v; bestB = j - v; }
+        }
+      }
+      prev = cur;
+    }
+    return { len: best, bi: bestB };
+  }
+  // 最长公共子序列（LCS）长度：单字错字 LCS≈90% → 近似；整句改写 LCS 低 → 不匹配。
+  // 不用「最长连续块」（会被一处错字切断而差一点不到 60%），也不用块之和（会被重复片段灌水）。
+  function coverSum(a, b){
+    if (!a || !b) return 0;
+    let prev = new Array(b.length + 1).fill(0);
+    for (let i = 1; i <= a.length; i++){
+      const cur = new Array(b.length + 1).fill(0);
+      for (let j = 1; j <= b.length; j++){
+        cur[j] = (a[i - 1] === b[j - 1]) ? prev[j - 1] + 1 : Math.max(prev[j], cur[j - 1]);
+      }
+      prev = cur;
+    }
+    return prev[b.length];
+  }
   const groups = [["生成版", GEN.map(r => [r[0], r[5]])], ["修正版", REV.map(r => [r[0], r[5]])]];
-  let total = 0, hit = 0;
+  let total = 0, hit = 0, nearN = 0;
   const rows = [];
   groups.forEach(([label, items]) => {
     items.forEach(([id, quote]) => {
       const parts = splitQuote(quote);
-      const ok = parts.length > 0 && parts.every(p => text.includes(norm(denoise(p))));
-      total++; if (ok) hit++;
+      // 依据里抄了「王睿：……」时，前缀与正文一样剥掉（严格对照模式不剥）
+      const cleaned = parts.map(p => {
+        let s = p.replace(/^[“”"]+|[“”"]+$/g, "");
+        if (ignoreSpace && ignoreSpace.checked) s = s.replace(/^[^\s：:，。；]{1,12}[：:]\s*/, "");
+        return norm(denoise(s));
+      });
+      const ok = parts.length > 0 && cleaned.every(c => text.includes(c));
+      let near = false, diff = 0, best = "";
+      if (!ok && text){
+        const qn = cleaned.join("");
+        const need = Math.max(2, Math.ceil(qn.length * 0.6));
+        const cover = coverSum(text, qn);
+        if (cover >= need && cover < qn.length){
+          near = true; diff = qn.length - cover;
+          const m = lcbLen(text, qn);
+          best = text.slice(Math.max(0, m.bi - 4), m.bi + m.len + 4);
+        }
+      }
+      total++; if (ok) hit++; if (near) nearN++;
+      const cls = ok ? "v-ok" : (near ? "v-warn" : "v-bad");
+      const txt = ok ? "命中" : (near ? "近似 · 差 " + diff + " 字" : "不匹配");
       rows.push(`<tr><td class="num">${id}</td><td><span class="tag">${label}</span></td>` +
-        `<td><span class="verdict ${ok ? "v-ok" : "v-bad"}">${ok ? "命中" : "不匹配"}</span></td>` +
-        `<td class="meta">${esc(quote)}</td></tr>`);
+        `<td><span class="verdict ${cls}">${txt}</span></td>` +
+        `<td class="meta">${esc(quote)}${near && best ? `<div class="near-hint">最接近的原文：${esc(best)}</div>` : ""}</td></tr>`);
     });
   });
   const pct = total ? Math.round(hit / total * 100) : 0;
+  const miss = total - hit - nearN;
   const asrNote = asr.is_asr
     ? `　· 识别为录音转写稿（${({ "timestamp+speaker": "时间码+说话人", "speaker": "仅说话人标记", "timestamp": "仅时间码" })[asr.form] || asr.form}，${asr.lines} 行），比对前已去掉时间码、说话人前缀、识别占位与标点`
     : "";
-  summaryEl.innerHTML = `共 ${total} 条依据：命中 <b>${hit}</b>，不匹配 <b>${total - hit}</b>（${pct}%）${asrNote}`;
+  summaryEl.innerHTML = `共 ${total} 条依据：命中 <b>${hit}</b>` +
+    (nearN ? `，近似 <b>${nearN}</b>（疑似识别错字/漏字，需人工确认）` : "") +
+    `，不匹配 <b>${miss}</b>（${pct}%）${asrNote}`;
   outEl.className = "";
   outEl.innerHTML = `<table><caption class="skip">依据校验结果</caption>
     <thead><tr><th scope="col">编号</th><th scope="col">版本</th><th scope="col">结果</th><th scope="col">原文依据</th></tr></thead>
     <tbody>${rows.join("")}</tbody></table>` +
-    (total - hit ? `<p class="meta" style="margin:10px 0 0">不匹配通常三个原因：转录被“智能润色”改过、表内依据被概括改写，或录音识别把话听成了别的词——这正是 D 维度要抓的东西。</p>` : "");
+    (miss ? `<p class="meta" style="margin:10px 0 0">不匹配通常三个原因：转录被“智能润色”改过、表内依据被概括改写，或录音识别把话听成了别的词——这正是 D 维度要抓的东西。状态写「近似 · 差 N 字」的先核那几处，多半是同音错字，别直接当成依据被改写。</p>` : "");
 }
 
 document.getElementById("load-sample").addEventListener("click", () => {

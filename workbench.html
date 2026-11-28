@@ -127,6 +127,7 @@
   .tag{display:inline-block;font-size:12px;padding:1px 8px;border-radius:6px;background:var(--accent-soft);color:var(--accent)}
   .v-ok{display:inline-block;font-size:12px;padding:1px 8px;border-radius:6px;color:var(--ok);background:var(--ok-bg)}
   .v-bad{display:inline-block;font-size:12px;padding:1px 8px;border-radius:6px;color:var(--p0);background:var(--p0-bg)}
+  .near-hint{margin-top:4px;font-size:11.8px;line-height:1.6;color:var(--muted)}
   .v-warn{display:inline-block;font-size:12px;padding:1px 8px;border-radius:6px;color:var(--p1);background:var(--p1-bg)}
 
   .note{font-size:13px;color:var(--muted);margin:10px 0 0}
@@ -1690,9 +1691,19 @@ var RECORDER = (function () {
 
     // 会话计时：只识别、不录音的时候也必须有递增的时间码，
     // 否则整篇都会是 [00:00:00]，看不出先后顺序。
-    // 录音中取录音时长；录音暂停时用会话时长兜底，避免时间码停在原地重复。
+    // 录音中取录音时长；暂停时会话计时同样冻结（累计扣掉暂停段），否则「暂停 5 分钟再继续」
+    // 会让时间码凭空跳过 5 分钟，而音频里根本没有这段——时间码与录音对不上。
     var sessionAt = 0;
-    function sessionElapsed() { return sessionAt ? (Date.now() - sessionAt) / 1000 : 0; }
+    var sessPausedMs = 0, sessPauseAt = 0;
+    function sessionElapsed() {
+      if (!sessionAt) return 0;
+      var end = sessPauseAt ? sessPauseAt : Date.now();
+      return Math.max(0, (end - sessionAt - sessPausedMs) / 1000);
+    }
+    function pauseSession() { if (!sessPauseAt) sessPauseAt = Date.now(); }
+    function resumeSession() {
+      if (sessPauseAt) { sessPausedMs += Date.now() - sessPauseAt; sessPauseAt = 0; }
+    }
 
     function currentAt() {
       if (recordingStarted) {
@@ -1748,11 +1759,31 @@ var RECORDER = (function () {
     }
 
     // 页面与浮窗共用同一条写入路径：浮窗里记的一条，和页面里记的完全等价
+    // v2.0 碎片合并：识别常把一句话切成几段（「好」「嗯」「对」各自成行）。同一个人、
+    // 上一行 ≤6 字、间隔 ≤4 s、本段 ≤20 字时并进上一行（用「、」连），只改文字不动时间码。
+    // 这是「减少碎片」，不是「猜说话人」——不同人、间隔长的照旧另起一行。
     function submitText(text, who) {
       var t = oneLine(text || "");
       if (!t) return false;
       var at = currentAt();
-      append({ at: at == null ? state.duration : at, speaker: who, text: t });
+      var atv = at == null ? state.duration : at;
+      var last = state.turns[state.turns.length - 1];
+      if (last && !last.mark && last.speaker === who && String(last.text || "").length <= 6 &&
+          t.length <= 20 && last.at != null && atv != null && atv >= last.at && (atv - last.at) <= 4) {
+        last.text = (String(last.text || "") + "、" + t).replace(/、+/g, "、");
+        last.merged = (last.merged || 0) + 1;
+        saveDraft();
+        // 合并是「改已有的那一行」，不是「再追加一行」：必须整段重建，
+        // 否则预览里会同时留着旧行和合并后的新行（实测确实会重复）。
+        if (el.preview) {
+          writePreview(namesLine(collectNames(state.turns)) + "\n\n" +
+            state.turns.map(function (x) { return lineOf(x); }).join("\n"), false);
+        }
+        renderLive(null);
+        setStatus("并入上一句（共 " + state.turns.filter(function (x) { return !x.mark; }).length + " 条）");
+        return true;
+      }
+      append({ at: atv, speaker: who, text: t });
       saveDraft();
       setStatus("记下 1 条（共 " + state.turns.filter(function (x) { return !x.mark; }).length + " 条）");
       return true;
@@ -1780,7 +1811,8 @@ var RECORDER = (function () {
     });
 
     if (el.pause) el.pause.addEventListener("click", function () {
-      if (rec.isPaused()) rec.resume(); else rec.pause();
+      if (rec.isPaused()) { rec.resume(); resumeSession(); }
+      else { rec.pause(); pauseSession(); }
     });
 
     if (el.stop) el.stop.addEventListener("click", function () {
@@ -3195,8 +3227,45 @@ const QC = (function(){
     }).filter(o => o["任务"]);
   }
 
-  // 三态：命中 / 不匹配 / 不可检
+  // 四态：命中 / 近似命中（疑似识别错字）/ 不匹配 / 不可检
   // v1.3：录音识别稿先去掉时间码/说话人前缀/识别占位与标点，避免把格式差异判成不可追溯
+  // v2.0：整条命不中时再算「最长公共连续片段」，覆盖依据 60% 以上记为近似命中——
+  //       识别稿的同音错字、漏字会让逐字比对整条崩掉，这一档把「疑似识别误差/轻微改写」
+  //       与「真的改写」分开。近似命中仍不算合格：不进「可直接建单」，只进「需人工确认」。
+  function longestCommonBlock(a, b){
+    if (!a || !b) return {len: 0, bi: 0};
+    let best = 0, bestB = 0;
+    let prev = new Array(b.length + 1).fill(0);
+    for (let i = 1; i <= a.length; i++){
+      const cur = new Array(b.length + 1).fill(0);
+      for (let j = 1; j <= b.length; j++){
+        if (a[i - 1] === b[j - 1]){
+          const v = prev[j - 1] + 1;
+          cur[j] = v;
+          if (v > best){ best = v; bestB = j - v; }
+        }
+      }
+      prev = cur;
+    }
+    return {len: best, bi: bestB};
+  }
+
+  // 最长公共子序列（LCS）长度，用作「近似命中」的覆盖量。
+  // 最长连续块会被一处错字切断而差一点不到 60%；块之和又会被重复片段灌水超过依据长度。
+  // LCS 两者都避免，且天然 ≤ 依据长度。
+  function commonCover(a, b){
+    if (!a || !b) return 0;
+    let prev = new Array(b.length + 1).fill(0);
+    for (let i = 1; i <= a.length; i++){
+      const cur = new Array(b.length + 1).fill(0);
+      for (let j = 1; j <= b.length; j++){
+        cur[j] = (a[i - 1] === b[j - 1]) ? prev[j - 1] + 1 : Math.max(prev[j], cur[j - 1]);
+      }
+      prev = cur;
+    }
+    return prev[b.length];
+  }
+
   function checkQuotes(rows, raw, opts){
     opts = opts || {};
     const asr = (typeof A_CHANNEL !== "undefined" && A_CHANNEL.detectAsr)
@@ -3211,10 +3280,29 @@ const QC = (function(){
     return rows.map(r => {
       const quote = String(r["原文依据"] || "").trim();
       const parts = quote.split(/[｜＋+]/).map(p => p.trim()).filter(Boolean);
-      if (!parts.length) return {编号: r["编号"], quote: quote, hit: false, checkable: false, asr: asrNorm};
+      if (!parts.length) return {编号: r["编号"], quote: quote, hit: false, near: false, diff: 0, best: "", checkable: false, asr: asrNorm};
       const norm = s => opts.normalize === false ? String(s) : squeeze(s);
-      const ok = parts.every(p => body.includes(norm(stripAsr(p.replace(/^[“”"]+|[“”"]+$/g, "")))));
-      return {编号: r["编号"], quote: quote, hit: ok, checkable: true, asr: asrNorm};
+      // v2.0：依据若是从转录整行抄来的「王睿：……」，前缀要与正文一样剥掉，
+// 否则正文剥了、依据没剥，整条就命不中——那是格式不对称，不是依据被改写。
+      const cleaned = parts.map(p => {
+        let s = p.replace(/^[“”"]+|[“”"]+$/g, "");
+        if (opts.normalize !== false) s = s.replace(/^[^\s：:，。；]{1,12}[：:]\s*/, "");
+        return norm(stripAsr(s));
+      });
+      const ok = cleaned.every(c => body.includes(c));
+      let near = false, diff = 0, best = "";
+      if (!ok && body){
+        const q = cleaned.join("");
+        const need = Math.max(2, Math.ceil(q.length * 0.6));
+        const cover = commonCover(body, q);
+        if (cover >= need && cover < q.length){
+          near = true;
+          diff = q.length - cover;
+          const m = longestCommonBlock(body, q);
+          best = body.slice(Math.max(0, m.bi - 4), m.bi + m.len + 4);
+        }
+      }
+      return {编号: r["编号"], quote: quote, hit: ok, near: near, diff: diff, best: best, checkable: true, asr: asrNorm};
     });
   }
 
@@ -3345,7 +3433,7 @@ const QC = (function(){
     return ctx;
   }
 
-  function hitBad(ctx){ return ctx.quotes.filter(q => q.checkable && !q.hit); }
+  function hitBad(ctx){ return ctx.quotes.filter(q => q.checkable && !q.hit && !q.near); }
 
   function mdEsc(s){ return String(s == null ? "" : s).replace(/\|/g, "\\|").replace(/\n/g, " "); }
 
@@ -3359,6 +3447,7 @@ const QC = (function(){
   function report(ctx){
     let L = [];
     const bad = hitBad(ctx);
+    const near = ctx.quotes.filter(q => q.checkable && q.near);
     L.push("# 会议待办质检报告\n\n");
     const asrR = ctx.preflight && ctx.preflight.asr;
     L.push("输入：参会人 " + (ctx.names || []).length + " 人｜待办 " + ctx.rows.length + " 条" +
@@ -3376,6 +3465,7 @@ const QC = (function(){
     }
     L.push("- 依据回查：**" + ctx.hit + "/" + ctx.checkable + " 命中**" +
            (ctx.uncheckable ? "（另 " + ctx.uncheckable + " 条不可检，不计入分母）" : "") +
+           (near.length ? "，近似命中 " + near.length + " 条（疑似识别错字/漏字：" + near.map(h => "#" + h["编号"]).join("、") + "）" : "") +
            (bad.length ? "，不匹配 " + bad.length + " 条：" + bad.map(h => "#" + h["编号"]).join("、") : "") + "\n");
     L.push("- 遗漏候选：**" + ctx.a.cands.length + " 条**（低置信池 " + ctx.a.low.length + " 条、机构主体 " + (ctx.a.orgs || []).length + " 条另列）\n");
     L.push("- 可建单三档：可直接建单 **" + ctx.readiness["可直接建单"] + "**｜需补字段 **" +
@@ -3473,7 +3563,8 @@ function esc(s){
 }
 
 function render(ctx){
-  const bad = ctx.quotes.filter(q => q.checkable && !q.hit);
+  const bad = ctx.quotes.filter(q => q.checkable && !q.hit && !q.near);
+  const near = ctx.quotes.filter(q => q.checkable && q.near);
   let h = "";
 
   // 系统判定：让使用者看到“它自己认成了什么、用了什么口径”，而不是自己去猜
@@ -3499,10 +3590,11 @@ function render(ctx){
   }
 
   // 结论先行：先给“查出几项、能不能直接用”，再看明细表
-  const needFix = bad.length + ctx.a.cands.length + ctx.readiness["需补字段"] + ctx.readiness["待人工判断"];
+  const needFix = bad.length + near.length + ctx.a.cands.length + ctx.readiness["需补字段"] + ctx.readiness["待人工判断"];
   h += '<div class="verdict">';
   h += '<span><b>本次查出</b> <span class="n">' + needFix + '</span> 项待处理</span>';
   h += '<span class="sep">·</span><span>依据不匹配 <span class="n">' + bad.length + '</span></span>';
+  h += '<span class="sep">·</span><span>近似命中（疑似识别错字）<span class="n">' + near.length + '</span></span>';
   h += '<span class="sep">·</span><span>遗漏候选 <span class="n">' + ctx.a.cands.length + '</span></span>';
   h += '<span class="sep">·</span><span>需补字段 <span class="n">' + ctx.readiness["需补字段"] + '</span></span>';
   h += '<span class="sep">·</span><span>待人工判断 <span class="n">' + ctx.readiness["待人工判断"] + '</span></span>';
@@ -3511,6 +3603,7 @@ function render(ctx){
 
   h += '<div class="summary">';
   h += '<div class="kpi ' + (bad.length ? "bad" : "ok") + '"><div class="n">' + ctx.hit + "/" + ctx.checkable + '</div><div class="t">依据命中（可检）</div>' +
+       (near.length ? '<div class="s">另 ' + near.length + " 条近似（疑似错字，需人工确认）</div>" : "") +
        (ctx.uncheckable ? '<div class="s">另 ' + ctx.uncheckable + " 条不可检</div>" : "") + '</div>';
   h += '<div class="kpi ' + (ctx.a.cands.length ? "warn" : "") + '"><div class="n">' + ctx.a.cands.length + '</div><div class="t">遗漏候选（需人工改判）</div></div>';
   h += '<div class="kpi ok"><div class="n">' + ctx.readiness["可直接建单"] + '</div><div class="t">可直接建单</div></div>';
@@ -3518,17 +3611,21 @@ function render(ctx){
   h += '<div class="kpi bad"><div class="n">' + ctx.readiness["待人工判断"] + '</div><div class="t">待人工判断</div></div>';
   h += '</div>';
 
-  h += '<section class="out"><h3>D 依据回查（命中 / 不匹配 / 不可检）<span class="cnt">命中 ' + ctx.hit + ' / 可检 ' + ctx.checkable + (ctx.uncheckable ? ' · 不可检 ' + ctx.uncheckable : '') + '</span></h3>';
+  h += '<section class="out"><h3>D 依据回查（命中 / 近似 / 不匹配 / 不可检）<span class="cnt">命中 ' + ctx.hit + ' / 可检 ' + ctx.checkable +
+       (near.length ? ' · 近似 ' + near.length : '') + (ctx.uncheckable ? ' · 不可检 ' + ctx.uncheckable : '') + '</span></h3>';
   if (!ctx.rows.length){ h += '<div class="empty">待办表为空——先粘贴六列表，或点「载入样例」。</div>'; }
   else {
     h += '<table><thead><tr><th>编号</th><th>结果</th><th>原文依据</th></tr></thead><tbody>';
     ctx.quotes.forEach(q => {
-      const cls = !q.checkable ? "v-warn" : (q.hit ? "v-ok" : "v-bad");
-      const txt = !q.checkable ? "不可检" : (q.hit ? "命中" : "不匹配");
-      h += '<tr><td class="num">' + esc(q["编号"]) + '</td><td><span class="' + cls + '">' + txt + '</span></td><td>' + esc(q.quote || "—") + '</td></tr>';
+      const cls = !q.checkable ? "v-warn" : (q.hit ? "v-ok" : (q.near ? "v-warn" : "v-bad"));
+      const txt = !q.checkable ? "不可检" : (q.hit ? "命中" : (q.near ? "近似 · 差 " + q.diff + " 字" : "不匹配"));
+      h += '<tr><td class="num">' + esc(q["编号"]) + '</td><td><span class="' + cls + '">' + txt + '</span></td><td>' +
+           esc(q.quote || "—") + (q.near && q.best ? '<div class="near-hint">最接近的原文：' + esc(q.best) + '</div>' : "") + '</td></tr>';
     });
     h += '</tbody></table>';
     if (!ctx.checkable) h += '<p class="note alert">没有可检依据：待办表缺「原文依据」列或全为空。这不是「全部不匹配」，是「无法检查」。</p>';
+    else if (near.length && !bad.length) h += '<p class="note">' + near.length + ' 条近似命中：逐字对不上，但有 ' + '60% 以上连续片段重合——先核这几个字，多半是识别同音错字或轻微漏字。<b>近似不算合格</b>，仍需人工确认后才能建单。</p>';
+    else if (near.length) h += '<p class="note">' + near.length + ' 条近似命中（疑似识别错字或漏字）、' + bad.length + ' 条真不匹配。<b>近似不算合格</b>，按「最接近的原文」核对后再判。</p>';
     else if (bad.length) h += '<p class="note">不匹配通常两种原因：转录被润色改过，或表内依据被概括改写。</p>';
     else h += '<p class="note">可检 ' + ctx.checkable + ' 条全部命中。</p>';
   }

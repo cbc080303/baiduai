@@ -449,13 +449,66 @@ def persons_in(sent_obj, names):
 # ---------------------------------------------------------------- 通道 1：依据校验
 
 
+def longest_common_block(a, b):
+    """最长公共连续片段，返回 (长度, a 起始, b 起始)。用于「近似命中」判定。"""
+    if not a or not b:
+        return 0, 0, 0
+    n, m = len(a), len(b)
+    best_len = best_a = best_b = 0
+    prev = [0] * (m + 1)
+    for i in range(1, n + 1):
+        cur = [0] * (m + 1)
+        ai = a[i - 1]
+        for j in range(1, m + 1):
+            if ai == b[j - 1]:
+                v = prev[j - 1] + 1
+                cur[j] = v
+                if v > best_len:
+                    best_len = v
+                    best_a = i - v
+                    best_b = j - v
+        prev = cur
+    return best_len, best_a, best_b
+
+
+def common_cover(a, b):
+    """最长公共子序列长度（LCS），用作「近似命中」的覆盖量。
+
+    试过两版：只看「最长连续块」时，一处同音错字会把句子切成前后两块，最长块
+    覆盖率刚好不到 60%，错字被误判成「不匹配」；改成「长度≥2 的块之和」又反过来
+    出问题——同一片段在正文里出现两次会被累加两次，覆盖量能超过依据长度本身。
+    LCS 两个毛病都没有：单字错字 LCS≈90% → 近似；整句改写 LCS 低 → 不匹配；
+    且 LCS ≤ 依据长度，天然有界。
+    """
+    if not a or not b:
+        return 0
+    n, m = len(a), len(b)
+    prev = [0] * (m + 1)
+    for i in range(1, n + 1):
+        cur = [0] * (m + 1)
+        ai = a[i - 1]
+        for j in range(1, m + 1):
+            if ai == b[j - 1]:
+                cur[j] = prev[j - 1] + 1
+            else:
+                cur[j] = prev[j] if prev[j] >= cur[j - 1] else cur[j - 1]
+        prev = cur
+    return prev[m]
+
+
 def check_quotes(rows, transcript_text, normalize=True):
-    """D 维度：原文依据能否在转录中逐字匹配（三态）。
+    """D 维度：原文依据能否在转录中逐字匹配（四态）。
+
+    - 命中：整条依据（多段则每段）都能在正文里连续找到。
+    - 近似命中（v2.0 新增）：整条命不中，但最长公共片段覆盖依据的 60% 以上。
+      识别稿的同音错字、漏字会让逐字比对整条崩掉；这一档把「疑似识别误差或轻微
+      改写」单独拎出来，让人先去核这几个字，而不是把 25 条一律读成「依据被改写」。
+      **近似命中不算合格**：不进「可直接建单」，只进「需人工确认」，口径不能松。
+    - 不匹配：连近似都不成立。
+    - 不可检：依据为空（缺列或空串），不进命中率分母。
 
     normalize=True 时先去掉两边的空白再比对——从文档/聊天窗复制的转录常带
     全角空格，严格比对会把整表判成“不匹配”，那是输入问题，不是依据问题。
-    checkable=False 表示这条没有依据可查（缺列或空串），它不是“不命中”，
-    调用方不得把它算进命中率分母。
     """
 # v1.6：录音识别稿先去掉时间码/说话人前缀/识别占位再比对，避免把“格式差异”
     # 误判成“依据不可追溯”。严格模式（normalize=False）不做任何归一化，保持原样，
@@ -467,8 +520,14 @@ def check_quotes(rows, transcript_text, normalize=True):
         return re.sub(r"\s+", "", s) if normalize else s
 
     def clean_quote(s):
-        """依据侧也要按同一口径去噪：只去占位与标点，不剥说话人/时间码。"""
+        """依据侧与正文同口径去噪：剥掉抄进来的「姓名：」前缀，再去占位与标点。
+
+        v2.0：依据常从转录里整行抄，带着「王睿：」；正文侧说话人前缀本来就会被剥，
+        不剥依据侧就整条命不中——那是格式不对称，不是依据被改写。
+        """
         s = s.strip("“”\"")
+        if normalize:
+            s = re.sub(r"^[^\s：:，。；]{1,12}[：:]\s*", "", s)
         if asr_norm:
             s = PLACEHOLDER_RE.sub("", PUNCT_ALL_RE.sub("", s))
         return squeeze(s)
@@ -479,10 +538,23 @@ def check_quotes(rows, transcript_text, normalize=True):
         quote = (r.get("原文依据") or "").strip()
         parts = [p.strip() for p in re.split(r"[｜|＋+]", quote) if p.strip()]
         if not parts:
-            results.append({"编号": r.get("编号", "?"), "hit": False, "quote": quote, "checkable": False})
+            results.append({"编号": r.get("编号", "?"), "hit": False, "near": False, "diff": 0,
+                            "best": "", "quote": quote, "checkable": False})
             continue
-        ok = all(clean_quote(p) in body for p in parts)
-        results.append({"编号": r.get("编号", "?"), "hit": ok, "quote": quote, "checkable": True})
+        cleaned = [clean_quote(p) for p in parts]
+        ok = all(c in body for c in cleaned)
+        near, diff, best = False, 0, ""
+        if not ok and body:
+            q = "".join(cleaned)
+            need = max(2, (len(q) * 6 + 9) // 10)      # 覆盖 60%（向上取整）
+            cover = common_cover(body, q)              # 长度 ≥2 的公共块之和
+            if cover >= need and cover < len(q):
+                near = True
+                diff = len(q) - cover
+                L, _ai, bi = longest_common_block(body, q)   # 只用来取「最接近的原文」
+                best = body[max(0, bi - 4): bi + L + 4]
+        results.append({"编号": r.get("编号", "?"), "hit": ok, "near": near, "diff": diff,
+                        "best": best, "quote": quote, "checkable": True, "asr": asr_norm})
     return results
 
 

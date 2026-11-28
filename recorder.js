@@ -538,7 +538,9 @@ var RECORDER = (function () {
       dlZip: $("rec-dl-zip"), list: $("rec-list"), load: $("rec-load"), del: $("rec-del"),
       clear: $("rec-clear"), clearAll: $("rec-clear-all"), floatBtn: $("rec-float"), unsupported: $("rec-unsupported"),
       asrBtn: $("rec-asr"), asrLang: $("rec-asr-lang"), asrMode: $("rec-asr-mode"),
-      asrState: $("rec-asr-state"), switchBox: $("rec-switch")
+      asrState: $("rec-asr-state"), switchBox: $("rec-switch"),
+      live: $("rec-live"), liveBody: $("rec-live-body"), liveMeta: $("rec-live-meta"),
+      liveEmpty: $("rec-live-empty"), liveGo: $("rec-live-go")
     };
     if (!el.preview) return null;      // 页面没这块就安静退出，不影响其它功能
 
@@ -657,13 +659,24 @@ var RECORDER = (function () {
       }
       refreshSpeakers();
       refreshFloat();
+      renderLive(null);      // 手动「记一条」与识别定稿都走 append，面板始终与成稿同源
     }
 
     // 会话计时：只识别、不录音的时候也必须有递增的时间码，
     // 否则整篇都会是 [00:00:00]，看不出先后顺序。
-    // 录音中取录音时长；录音暂停时用会话时长兜底，避免时间码停在原地重复。
+    // 录音中取录音时长；暂停时会话计时同样冻结（累计扣掉暂停段），否则「暂停 5 分钟再继续」
+    // 会让时间码凭空跳过 5 分钟，而音频里根本没有这段——时间码与录音对不上。
     var sessionAt = 0;
-    function sessionElapsed() { return sessionAt ? (Date.now() - sessionAt) / 1000 : 0; }
+    var sessPausedMs = 0, sessPauseAt = 0;
+    function sessionElapsed() {
+      if (!sessionAt) return 0;
+      var end = sessPauseAt ? sessPauseAt : Date.now();
+      return Math.max(0, (end - sessionAt - sessPausedMs) / 1000);
+    }
+    function pauseSession() { if (!sessPauseAt) sessPauseAt = Date.now(); }
+    function resumeSession() {
+      if (sessPauseAt) { sessPausedMs += Date.now() - sessPauseAt; sessPauseAt = 0; }
+    }
 
     function currentAt() {
       if (recordingStarted) {
@@ -719,11 +732,31 @@ var RECORDER = (function () {
     }
 
     // 页面与浮窗共用同一条写入路径：浮窗里记的一条，和页面里记的完全等价
+    // v2.0 碎片合并：识别常把一句话切成几段（「好」「嗯」「对」各自成行）。同一个人、
+    // 上一行 ≤6 字、间隔 ≤4 s、本段 ≤20 字时并进上一行（用「、」连），只改文字不动时间码。
+    // 这是「减少碎片」，不是「猜说话人」——不同人、间隔长的照旧另起一行。
     function submitText(text, who) {
       var t = oneLine(text || "");
       if (!t) return false;
       var at = currentAt();
-      append({ at: at == null ? state.duration : at, speaker: who, text: t });
+      var atv = at == null ? state.duration : at;
+      var last = state.turns[state.turns.length - 1];
+      if (last && !last.mark && last.speaker === who && String(last.text || "").length <= 6 &&
+          t.length <= 20 && last.at != null && atv != null && atv >= last.at && (atv - last.at) <= 4) {
+        last.text = (String(last.text || "") + "、" + t).replace(/、+/g, "、");
+        last.merged = (last.merged || 0) + 1;
+        saveDraft();
+        // 合并是「改已有的那一行」，不是「再追加一行」：必须整段重建，
+        // 否则预览里会同时留着旧行和合并后的新行（实测确实会重复）。
+        if (el.preview) {
+          writePreview(namesLine(collectNames(state.turns)) + "\n\n" +
+            state.turns.map(function (x) { return lineOf(x); }).join("\n"), false);
+        }
+        renderLive(null);
+        setStatus("并入上一句（共 " + state.turns.filter(function (x) { return !x.mark; }).length + " 条）");
+        return true;
+      }
+      append({ at: atv, speaker: who, text: t });
       saveDraft();
       setStatus("记下 1 条（共 " + state.turns.filter(function (x) { return !x.mark; }).length + " 条）");
       return true;
@@ -742,6 +775,7 @@ var RECORDER = (function () {
         recordingStarted = true;
         if (!state.title) state.title = title();
         setStatus("录音中——录音只在本机，结束后点「保存原稿」才会落档");
+        liveMeta();
       }).catch(function (err) {
         el.start.disabled = false;
         setStatus("无法开始录音：" + (err && err.message ? err.message : "浏览器未授权麦克风") +
@@ -750,7 +784,8 @@ var RECORDER = (function () {
     });
 
     if (el.pause) el.pause.addEventListener("click", function () {
-      if (rec.isPaused()) rec.resume(); else rec.pause();
+      if (rec.isPaused()) { rec.resume(); resumeSession(); }
+      else { rec.pause(); pauseSession(); }
     });
 
     if (el.stop) el.stop.addEventListener("click", function () {
@@ -760,6 +795,7 @@ var RECORDER = (function () {
         state.audio = out.blob;
         state.audioType = out.type;
         setStatus("录音结束：" + clock(state.duration) + "，音频已就绪（点「下载录音」或「保存原稿」留档）");
+        liveMeta();
       });
     });
 
@@ -905,10 +941,65 @@ var RECORDER = (function () {
 
     function asrSay(text) { if (el.asrState) el.asrState.textContent = text || ""; }
 
+    // ---------- 实时转写面板：录音进行中就能看见的文档流 ----------
+    // 定稿句直接读 state.turns（与成稿同一份数据，不另存一份）；半句只在这里显示，永不写进成稿。
+    var liveInterim = "";
+    var LIVE_MAX = 40;                     // 只渲染最近 40 句：两小时会议不会把 DOM 撑大
+
+    function liveEmpty(text) { if (el.liveEmpty && text) el.liveEmpty.textContent = text; }
+
+    function liveMeta() {
+      if (!el.liveMeta) return;
+      var n = 0, i;
+      for (i = 0; i < state.turns.length; i++) if (!state.turns[i].mark) n++;
+      var bits = ["已定稿 " + n + " 句"];
+      if (recordingStarted) {
+        var at = currentAt();
+        bits.push("录音 " + clock(at == null ? state.duration : at));
+      }
+      bits.push(asrOn
+        ? ("识别中（" + (asrMode() === "local" ? "端上：音频不出本机" : "云端：音频会发给浏览器厂商") + "）")
+        : "识别未开");
+      el.liveMeta.textContent = bits.join(" · ");
+    }
+
+    function renderLive(interim) {
+      if (!el.liveBody) return;
+      if (interim != null) liveInterim = interim;
+      var lines = [], i, t, start = Math.max(0, state.turns.length - LIVE_MAX);
+      for (i = start; i < state.turns.length; i++) {
+        t = state.turns[i];
+        lines.push('<p class="rec-live-line' + (t.mark ? " mark" : "") + '">' +
+          '<span class="t">' + esc(clock(t.at || 0)) + "</span>" +
+          (t.mark
+            ? '<span class="txt">［打点］' + esc(t.mark) + "</span>"
+            : '<span class="who">' + esc(t.speaker || DEFAULT_SPEAKER) + "</span>" +
+              '<span class="txt">' + esc(t.text || "") + "</span>") +
+          "</p>");
+      }
+      if (liveInterim) {
+        lines.push('<p class="rec-live-int"><span class="dot" aria-hidden="true"></span>' + esc(liveInterim) + "</p>");
+      }
+      if (lines.length) {
+        el.liveBody.innerHTML = lines.join("");
+        el.liveBody.scrollTop = el.liveBody.scrollHeight;
+      } else if (el.liveEmpty && el.liveEmpty.parentNode !== el.liveBody) {
+        el.liveBody.innerHTML = "";
+        el.liveBody.appendChild(el.liveEmpty);
+      }
+      liveMeta();
+    }
+
+    if (el.liveGo && el.asrBtn) el.liveGo.addEventListener("click", function () { el.asrBtn.click(); });
+
     function asrLabel(on) {
-      if (!el.asrBtn) return;
-      el.asrBtn.textContent = on ? "停止识别" : "语音识别";
-      el.asrBtn.setAttribute("aria-pressed", on ? "true" : "false");
+      if (el.asrBtn) {
+        el.asrBtn.textContent = on ? "停止识别" : "语音识别";
+        el.asrBtn.setAttribute("aria-pressed", on ? "true" : "false");
+      }
+      // 面板里那颗按钮是同一个开关的第二个入口：文案必须跟着状态走。
+      // 否则识别已经开着、按钮还写「开实时转写」，点下去会把它停掉——语义正好反了。
+      if (el.liveGo) el.liveGo.textContent = on ? "停止识别" : "开实时转写";
     }
 
     function asrMode() { return (el.asrMode && el.asrMode.value === "remote") ? "remote" : "local"; }
@@ -973,11 +1064,15 @@ var RECORDER = (function () {
         lang: asrLang(),
         local: asrMode() !== "remote",
         idleMs: 1400,
-        onText: function (r) { if (r && r.interim) asrSay("听到：" + r.interim); },
+        onText: function (r) {
+          // 半句只进面板：说过没停顿的半句还不算定稿，不能进成稿，否则改口就留下两遍
+          if (r && r.interim != null) renderLive(r.interim);
+        },
         onSegment: function (text) {
           var who = pendingWho != null ? pendingWho : (speaker() || DEFAULT_SPEAKER);
           if (submitText(text, who)) {
             asrUsed = true;
+            renderLive("");      // 定稿句已进 state.turns，append 会重渲染；这里清掉半句
             asrSay("落一行（" + who + "），共 " + state.turns.filter(function (t) { return !t.mark; }).length + " 条");
           }
         },
@@ -995,6 +1090,7 @@ var RECORDER = (function () {
           if (s === "listening-local") asrSay("识别中（端上：音频不出本机）");
           else if (s === "listening-remote") asrSay("识别中（云端：音频会发给浏览器厂商）");
           else if (s === "stopped") asrSay("识别已停");
+          liveMeta();
         }
       });
       return asrCtl;
@@ -1027,6 +1123,7 @@ var RECORDER = (function () {
       if (!a) return;
       if (!a.supported()) {
         asrSay("这个浏览器没有语音识别接口（Chrome / Edge 可用；Safari 与 Chrome 安卓版没有）。文字录入不受影响。");
+        liveEmpty("这个浏览器没有实时转写接口（Chrome / Edge 可用；Safari 与 Chrome 安卓版没有）。用「记一条」手敲，或把会议平台转写导出后贴回来，质检功能不受影响。");
         return;
       }
       if (asrOn) { a.stop(); return; }
