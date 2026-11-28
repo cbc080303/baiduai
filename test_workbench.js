@@ -49,8 +49,8 @@ try {
 vm.runInContext("globalThis.__qc = QC;", sandbox);
 const QC = sandbox.__qc;
 
-const tr = fs.readFileSync(path.join(__dirname, "agent-src", "meeting-todo-qc", "samples", "样例_转录.txt"), "utf8");
-const todo = fs.readFileSync(path.join(__dirname, "agent-src", "meeting-todo-qc", "samples", "样例_待办.csv"), "utf8");
+const tr = fs.readFileSync(path.join(__dirname, "samples", "样例_转录.txt"), "utf8");
+const todo = fs.readFileSync(path.join(__dirname, "samples", "样例_待办.csv"), "utf8");
 
 const fails = [];
 const eq = (name, got, want) => { if (String(got) !== String(want)) fails.push(`${name}: 得到 ${got}，期望 ${want}`); };
