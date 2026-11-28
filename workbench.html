@@ -3531,9 +3531,12 @@ const QC = (function(){
     L.push("- 「可直接执行」（四要件齐全）与「可直接建单」（能直接建进任务系统）不是一回事，本报告按后者分档。\n");
     L.push("- 不带准确率与 Kappa：样本量不足时不构成统计估计，只有条目级计数。\n");
     L.push("\n## 五、字段来源与可复核回执\n\n");
-    L.push(mdTable(["编号", "负责人", "来源", "依据定位", "指纹"],
+    L.push(mdTable(["编号", "负责人", "来源", "依据定位", "相似度", "指纹"],
       G2.map(g => ({"编号": g.编号, "负责人": g.负责人 || "—", "来源": g.来源,
-                    "依据定位": g.定位, "指纹": g.指纹 || "—"}))));
+                    "依据定位": g.定位,
+                    "相似度": g.相似度 ? (Math.round(g.相似度 * 100) + "%") + (g.差异 && g.差异.length ? "（" + g.差异.map(d => d.op + "「" + d.text + "」").join("，") + "）" : "") : "—",
+                    "指纹": g.指纹 || "—"}))));
+    L.push("- 相似度＝1 − 字符编辑距离 / 较长者长度（归一化 Levenshtein，口径同 RapidFuzz）；「依据定位」看落在第几句，相似度看这句被改写了多少，差异标出「缺/多」的字符片段（字符级对齐，思路同 jsdiff 的 Myers 差分）。");
     L.push("- 来源说明：**本人认领**＝依据句由本人说出且句内有「我来」类认领；**他人指派**＝他人点名派活；**仅提及**＝名字出现但无认领也无指派；**原文无此人**＝整篇没这个名字。\n");
     L.push("- 回执口径：每条依据钉到「第几句 · 说话人 · 字符偏移 · 8 位指纹」，配合转录原文可离线重算；`QC.verifyReceipt()` 重算并报出被改动的条目。回执只是复核凭据，不构成准确率或统计估计。\n\n");
     if (FD2.length){
@@ -3541,6 +3544,24 @@ const QC = (function(){
     } else {
       L.push("未发现同句多条、疑似重复、同句字段打架三类结构问题。\n\n");
     }
+    L.push("\n## 六、待建单清单（筛后）\n\n");
+    const _ready = packReady(ctx), _blk = packBlocked(ctx);
+    L.push("可直接建单 **" + _ready.length + "** 条 / 共 " + ctx.rows.length + " 条。页面上的导入包只含这一批，其余条目在下面列原因、留人工处理。\n\n");
+    if (_ready.length){
+      L.push(mdTable(["编号", "任务", "负责人", "截止时间", "来源"],
+        _ready.map(x => ({"编号": x.r["编号"], "任务": x.r["任务"], "负责人": x.r["负责人"],
+                          "截止时间": x.r["截止时间"],
+                          "来源": ownerGrade(x.r, splitLines(ctx.raw), ctx.names).label}))));
+      L.push("\n");
+    }
+    if (_blk.length){
+      L.push("未入包原因：\n\n");
+      L.push(mdTable(["编号", "任务", "处置", "原因"], _blk.map(b => ({"编号": b.编号, "任务": b.任务, "处置": b.处置, "原因": b.原因}))));
+      L.push("\n");
+    }
+    L.push("- 竞品的行动项同步是「把提取到的全部灌进任务系统」，本工具在同步前多一道筛：没有依据、负责人不实、截止缺失的条目不进包。\n");
+    L.push("- 导入包列名对齐三家真实模板（teambition 任务标题/执行者/优先级/任务列表/备注、飞书任务 任务名称/负责人/描述/清单、钉钉待办 待办标题/执行人/优先级），不自造格式。\n");
+    L.push("- 截止时间保留表内原始表达：缺会议基准日时不做绝对日期换算——硬算一个日期会让导入后的提醒时刻出错。\n\n");
     return L.join("");
   }
 
@@ -3556,6 +3577,59 @@ const QC = (function(){
       out += [r["编号"], r["任务"], r["负责人"], r["截止时间"], f["字段状态"], verdict,
               f["负责人线索"], f["截止线索"], it.risk, readiness(it)
              ].map(esc).join(",") + "\r\n";
+    });
+    return "\ufeff" + out;
+  }
+
+  // ---------- v3.3：筛后建单包（同步前过一道闸） ----------
+  // 竞品的动作是「把提取到的行动项一键同步进任务系统」，同步前不筛。
+  // 这里先在同步前过一道闸：只有 readiness()==可直接建单 的条目才进包。
+  // 列名对齐仓库里三份真实导入模板（teambition / 飞书任务 / 钉钉待办），不自造格式。
+  function packColumns(provider){
+    if (provider === "feishu") return ["任务名称", "负责人", "截止时间", "描述", "清单"];
+    if (provider === "dingtalk") return ["待办标题", "执行人", "截止时间", "描述", "优先级"];
+    return ["任务标题", "执行者", "截止时间", "优先级", "任务列表", "备注"];
+  }
+  function packEsc(v){
+    const t = String(v == null ? "" : v);
+    return /[",\r\n]/.test(t) ? '"' + t.replace(/"/g, '""') + '"' : t;
+  }
+  const ABS_DATE = /^\d{4}[-/]\d{1,2}[-/]\d{1,2}$/;
+  function packDesc(r){
+    const due = String(r["截止时间"] || "").trim();
+    const rel = (due && !ABS_DATE.test(due)) ? "；截止原始表达：" + due + "（相对表达，未换算绝对日期）" : "";
+    return "约束：" + (String(r["约束"] || "").trim() || "—") +
+           "；原文依据：" + (String(r["原文依据"] || "").trim() || "—") +
+           "；质检编号：#" + r["编号"] + rel;
+  }
+  function packReady(ctx){
+    const out = [];
+    ctx.rows.forEach(function(r, i){ if (readiness(ctx.items[i]) === "可直接建单") out.push({r: r, it: ctx.items[i]}); });
+    return out;
+  }
+  function packBlocked(ctx){
+    const out = [];
+    ctx.rows.forEach(function(r, i){
+      const it = ctx.items[i], rd = readiness(it);
+      if (rd === "可直接建单") return;
+      const why = [];
+      if (it.no_owner) why.push("负责人缺或责任共担");
+      if (it.soft) why.push("原句像讨论不像派活");
+      if (it.no_due) why.push("截止缺失");
+      if (it.shared) why.push("责任共担需先定主责");
+      out.push({编号: String(r["编号"]), 任务: r["任务"], 处置: rd, 原因: why.join("；") || "字段需人工确认"});
+    });
+    return out;
+  }
+  function taskPack(ctx, provider){
+    const rows = packReady(ctx);
+    let out = packColumns(provider).join(",") + "\r\n";
+    rows.forEach(function(x){
+      const r = x.r, desc = packDesc(r);
+      const line = (provider === "feishu") ? [r["任务"], r["负责人"], r["截止时间"], desc, "会议待办"]
+                 : (provider === "dingtalk") ? [r["任务"], r["负责人"], r["截止时间"], desc, "普通"]
+                 : [r["任务"], r["负责人"], r["截止时间"], "普通", "会议待办", desc];
+      out += line.map(packEsc).join(",") + "\r\n";
     });
     return "\ufeff" + out;
   }
@@ -3593,6 +3667,132 @@ const QC = (function(){
     return ("0000000" + h.toString(16)).slice(-8);
   }
 
+  // 归一化编辑相似度（0–1）：1 − 编辑距离 / 较长者长度。口径对齐 RapidFuzz 的归一化 Levenshtein。
+  // 与本文件已有的「覆盖比」（公共片段 / 依据长度）并列使用：覆盖比看「漏了多少」，相似度看「改了多少」。
+  function levRatio(a, b){
+    const x = String(a == null ? "" : a), y = String(b == null ? "" : b);
+    const n = x.length, m = y.length;
+    if (!n && !m) return 1;
+    if (!n || !m) return 0;
+    const max = Math.max(n, m);
+    if (n * m > 40000) return commonCover(x, y) / max;   // 长句降级，避免 O(n·m) 卡顿
+    let prev = new Array(m + 1), cur = new Array(m + 1);
+    for (let j = 0; j <= m; j++) prev[j] = j;
+    for (let i = 1; i <= n; i++){
+      cur[0] = i;
+      const cx = x.charCodeAt(i - 1);
+      for (let j = 1; j <= m; j++){
+        const cost = cx === y.charCodeAt(j - 1) ? 0 : 1;
+        const v = prev[j] + 1 < cur[j - 1] + 1 ? prev[j] + 1 : cur[j - 1] + 1;
+        cur[j] = v < prev[j - 1] + cost ? v : prev[j - 1] + cost;
+      }
+      const t = prev; prev = cur; cur = t;
+    }
+    return Math.max(0, 1 - prev[m] / max);
+  }
+
+  // 字符级差异（LCS 回溯，Myers 1970/1986 家族的最简形式）：说清「依据比原文少了/多了哪几个字」。
+  // 「缺」= 原文有而依据没有；「多」= 依据有而原文没有。只回前 2 段、每段最多 12 字，避免整句糊满。
+  function charDiff(quote, line){
+    const x = String(quote == null ? "" : quote), y = String(line == null ? "" : line);
+    if (x === y) return [];
+    const n = x.length, m = y.length;
+    if (!n || !m || n * m > 40000) return [];
+    const dp = [];
+    for (let i = 0; i <= n; i++) dp.push(new Uint16Array(m + 1));
+    for (let i = 1; i <= n; i++)
+      for (let j = 1; j <= m; j++)
+        dp[i][j] = x.charCodeAt(i - 1) === y.charCodeAt(j - 1)
+          ? dp[i - 1][j - 1] + 1
+          : Math.max(dp[i - 1][j], dp[i][j - 1]);
+    const ops = [];
+    let i = n, j = m;
+    while (i > 0 && j > 0){
+      if (x.charCodeAt(i - 1) === y.charCodeAt(j - 1)){ i--; j--; }
+      else if (dp[i - 1][j] >= dp[i][j - 1]){ ops.push({op: "缺", ch: x[i - 1]}); i--; }
+      else { ops.push({op: "多", ch: y[j - 1]}); j--; }
+    }
+    while (i > 0){ ops.push({op: "缺", ch: x[i - 1]}); i--; }
+    while (j > 0){ ops.push({op: "多", ch: y[j - 1]}); j--; }
+    ops.reverse();
+    const seg = [];
+    ops.forEach(o => {
+      const last = seg[seg.length - 1];
+      if (last && last.op === o.op) last.text += o.ch;
+      else seg.push({op: o.op, text: o.ch});
+    });
+    return seg.slice(0, 2).map(g => ({op: g.op, text: g.text.slice(0, 12)}));
+  }
+
+  // 二元组重合（Jaccard）：语序变了但相邻二字组合大部分还在，所以它比字符覆盖比对「调语序」稳得多。
+  function bigramJaccard(a, b){
+    const A = String(a == null ? "" : a), B = String(b == null ? "" : b);
+    if (A.length < 2 || B.length < 2) return 0;
+    const cnt = new Map();
+    for (let i = 0; i < A.length - 1; i++){ const k = A.slice(i, i + 2); cnt.set(k, (cnt.get(k) || 0) + 1); }
+    let inter = 0;
+    for (let i = 0; i < B.length - 1; i++){
+      const k = B.slice(i, i + 2), inA = cnt.get(k) || 0;
+      if (inA > 0){ inter += 1; cnt.set(k, inA - 1); }
+    }
+    const union = (A.length - 1) + (B.length - 1) - inter;
+    return union > 0 ? Math.min(1, inter / union) : 0;
+  }
+
+  // 截止时间的写法归一：只用于判断两个截止「是不是同一时点」，不产出绝对日期。
+  // 思路来源：Time-NLP 系列（Java 原版 shinyke/Time-NLP；其 Python3 移植 PyPI ChineseDateTimeNLP 标注 MIT Licence），
+  // 做法是「时间词分类 + 以基准时间归一相对表达」。本实现未复制其源码，只移植「同义时间写法映射到同一结构键」这一子集，
+  // 并且刻意不做「未来倾向」推断（没有会议基准日时推断会把「周四」猜错）。
+  const WD = { "一": 1, "二": 2, "三": 3, "四": 4, "五": 5, "六": 6, "日": 7, "天": 7, "1": 1, "2": 2, "3": 3, "4": 4, "5": 5, "6": 6, "7": 7 };
+  const WK_OFF = { "上上": -2, "上上上": -3, "上": -1, "这": 0, "本": 0, "下": 1, "下下": 2 };
+  function dueKey(raw){
+    let s = String(raw == null ? "" : raw).trim();
+    if (!s) return "";
+    s = s.replace(/\s+/g, "").replace(/[，。；、,;]/g, "");
+    s = s.replace(/之前|以前|前|为止|截止|之内|以内|内/g, "");
+    // 周表达：本周五 / 这周五 / 周五 / 下周三 / 星期四 / 礼拜二
+    let m = s.match(/(上上|上|这|本|下下|下)?(?:个)?(?:周|星期|礼拜)([一二三四五六日天1-7])/);
+    if (m){
+      const off = WK_OFF[m[1] || "这"] === undefined ? 0 : WK_OFF[m[1] || "这"];
+      const wd = WD[m[2]] || 0;
+      if (wd) return "周" + (off >= 0 ? "+" + off : off) + "|" + wd;
+    }
+    // 先认带月的绝对写法「9月30日」，再认相对月「下个月10号」；顺序反了会把 9月30日 当成「本月30号」。
+    m = s.match(/([0-9]{1,2})月([0-9]{1,2})[号日]/);
+    if (m) return "月日|" + parseInt(m[1], 10) + "|" + parseInt(m[2], 10);
+    m = s.match(/(上上|上|这|本|下下|下)?(?:个)?月(?:的)?([0-9]{1,2})[号日]/);
+    if (m){
+      const off = WK_OFF[m[1] || "本"] === undefined ? 0 : WK_OFF[m[1] || "本"];
+      return "月" + (off >= 0 ? "+" + off : off) + "|" + parseInt(m[2], 10);
+    }
+    if (/月底|月末/.test(s)) return "月+0|末";
+    if (/月初/.test(s)) return "月+0|初";
+    if (/月中旬|月中/.test(s)) return "月+0|中";
+    if (/今天|今日/.test(s)) return "日+0";
+    if (/明天|明日/.test(s)) return "日+1";
+    if (/后天/.test(s)) return "日+2";
+    m = s.match(/([0-9]{1,2})天/);
+    if (m) return "天+" + parseInt(m[1], 10);
+    return "";   // 无时间词（如「评审会前」）→ 不猜，调用方退回原串比较
+  }
+
+  // 负责人主责归一：「赵敏（主）／陈晨（配合）」与「赵敏」是同一个主责人，字符串相等判不出来。
+  // 只比较主责集合、且要求集合完全相同，不放松成「交集非空」——否则「王睿、张岚」与「王睿」会被判成同一人。
+  function ownerMainKey(cell){
+    const s = String(cell == null ? "" : cell).trim();
+    if (!s || MISSING.has(s)) return "";
+    const main = [];
+    s.split(/[／/、,，]/).forEach(function(seg){
+      if (!seg) return;
+      if (/配合/.test(seg) && !/主/.test(seg)) return;   // 纯配合方不算主责
+      let nm = seg.replace(/[（(][^）)]*[）)]/g, "").trim();
+      nm = nm.replace(/(主责|主要责任人|责任人|负责|主)$/g, "").trim();
+      if (nm) main.push(nm);
+    });
+    const uniq = Array.from(new Set(main)).sort();
+    return uniq.length ? uniq.join("|") : s;
+  }
+
   // 把一条依据钉到「第几句、谁说的、字符偏移、指纹」上。
   function locate(ls, quote){
     const q = keepChars(String(quote || "").replace(/^[^\s：:，。；]{1,12}[：:]\s*/, ""));
@@ -3605,9 +3805,11 @@ const QC = (function(){
     });
     if (!best || !best.cover) return null;
     const blk = longestCommonBlock(best.line.norm, q);
+    const lev = levRatio(q, best.line.norm);
     return {line: best.i + 1, speaker: best.line.speaker || "未标注",
             off: Math.max(0, blk.bi), cover: best.cover,
             ratio: Math.round(best.cover / q.length * 100) / 100,
+            lev: lev, diff: lev < 0.999 ? charDiff(q, best.line.norm) : [],
             fp: fnv1a(best.line.norm), text: best.line.text};
   }
 
@@ -3675,21 +3877,31 @@ const QC = (function(){
         out.push({type: "同句多条", ids: ids, why: "第 " + k + " 句被 " + ids.length + " 条待办同时引用：同句两件事时，覆盖判断会把第二件吸收掉"});
       const outs = ids.map(id => rows.find(r => String(r["编号"]) === String(id)) || {});
       const dues = outs.map(r => String(r["截止时间"] || "").trim()).filter(v => v && !MISSING.has(v));
-      if (new Set(dues).size > 1)
+      // 「本周五」与「这周五之前」是同一时点，按原串比会误报冲突，故先归一；归一不了的原串兜底。
+      const dueKeys = dues.map(v => dueKey(v) || ("原串:" + v));
+      if (new Set(dueKeys).size > 1)
         out.push({type: "截止冲突", ids: ids, why: "同一依据句给出两个不同截止：" + Array.from(new Set(dues)).join(" / ")});
       const owners = outs.map(r => String(r["负责人"] || "").trim()).filter(v => v && !MISSING.has(v));
-      if (new Set(owners).size > 1)
+      // 「赵敏（主）／陈晨（配合）」与「赵敏」主责相同，不算冲突。
+      if (new Set(owners.map(ownerMainKey)).size > 1)
         out.push({type: "负责人冲突", ids: ids, why: "同一依据句给出两个不同负责人：" + Array.from(new Set(owners)).join(" / ")});
     });
     for (let i = 0; i < rows.length; i++){
       for (let j = i + 1; j < rows.length; j++){
         const a = keepChars(rows[i]["任务"]), b = keepChars(rows[j]["任务"]);
         if (!a || !b) continue;
-        const ratio = commonCover(a, b) / Math.max(a.length, b.length);
+        const cv = commonCover(a, b) / Math.max(a.length, b.length);
+        const lv = levRatio(a, b), jc = bigramJaccard(a, b);
+        const score = Math.max(cv, lv, jc);
         const oa = String(rows[i]["负责人"] || "").trim(), ob = String(rows[j]["负责人"] || "").trim();
-        if (ratio >= 0.6 && !MISSING.has(oa) && oa === ob)
+        const ka = ownerMainKey(oa), kb = ownerMainKey(ob);
+        // 阈值 0.5（原 0.6）：真实语料 223 对的三把尺子上限 0.46，组合判据 0.50 零误报、0.45 有一对误报，
+        // 见 calib_scan.js、calib_real_v2.js 与《重复阈值标定_真实语料_v2.0.md》。改阈值必须重跑这三个脚本。
+        // 负责人比较用主责键（不是原串）：「赵敏（主）／陈晨（配合）」与「赵敏」算同一主责人。
+        if (score >= 0.5 && ka && ka === kb)
           out.push({type: "疑似重复", ids: [rows[i]["编号"], rows[j]["编号"]],
-                    why: "同一负责人 " + oa + "，两条任务文字重合 " + Math.round(ratio * 100) + "%，可能是同一件事登了两次"});
+                    why: "同一负责人 " + ka + "，三把尺子最高 " + Math.round(score * 100) +
+                         "%（覆盖 " + Math.round(cv * 100) + "%／编辑 " + Math.round(lv * 100) + "%／二元组 " + Math.round(jc * 100) + "%），可能是同一件事登了两次"});
       }
     }
     return out;
@@ -3705,6 +3917,8 @@ const QC = (function(){
               来源: g.label, 来源码: g.grade, 来源说明: g.why,
               定位: loc ? ("第 " + loc.line + " 句 · " + loc.speaker + " · 字符 " + loc.off) : "未定位",
               指纹: loc ? loc.fp : "", 覆盖: loc ? loc.ratio : 0,
+              相似度: loc ? Math.round(loc.lev * 100) / 100 : 0,
+              差异: loc ? loc.diff : [],
               就绪: readiness(ctx.items[i])};
     });
   }
@@ -3720,10 +3934,12 @@ const QC = (function(){
               due: String(r["截止时间"] || ""),
               evidence: {line: loc ? loc.line : 0, speaker: loc ? loc.speaker : "",
                          offset: loc ? loc.off : -1, fp: loc ? loc.fp : "",
+                         lev: loc ? Math.round(loc.lev * 100) / 100 : 0,
+                         diff: loc ? loc.diff : [],
                          quote: String(r["原文依据"] || "")},
               readiness: readiness(ctx.items[i])};
     });
-    return {schema: "meeting-todo-qc/receipt@1", tool: "会议待办质检器 v3.0",
+    return {schema: "meeting-todo-qc/receipt@1", tool: "会议待办质检器 v3.3",
             generated_at: new Date().toISOString(),
             transcript: {chars: keepChars(ctx.raw).length, lines: ls.length,
                          fp: fnv1a(ls.map(l => l.norm).join(""))},
@@ -3754,8 +3970,10 @@ const QC = (function(){
 
   return {parseRows: parseRows, checkQuotes: checkQuotes, fieldCheck: fieldCheck,
           buildItems: buildItems, readiness: readiness, preflight: preflight,
-          run: run, report: report, csv: csv,
-          splitLines: splitLines, fnv1a: fnv1a, locate: locate, ownerGrade: ownerGrade,
+          run: run, report: report, csv: csv, taskPack: taskPack, packReady: packReady, packBlocked: packBlocked,
+          splitLines: splitLines, fnv1a: fnv1a, levRatio: levRatio, charDiff: charDiff,
+          bigramJaccard: bigramJaccard, dueKey: dueKey, ownerMainKey: ownerMainKey,
+          locate: locate, ownerGrade: ownerGrade,
           findings: findings, graded: graded, receipt: receipt, verifyReceipt: verifyReceipt};
 })();
 /*==ENGINE-END==*/
@@ -3881,6 +4099,12 @@ function render(ctx){
     });
     h += '</tbody></table>';
   } else h += '<div class="empty">无待办数据。</div>';
+  h += '<div class="rcpt"><div class="rcpt-bar">' +
+       '<button class="btn" id="btn-pack-team" type="button">导入包 · Teambition</button>' +
+       '<button class="btn" id="btn-pack-feishu" type="button">导入包 · 飞书任务</button>' +
+       '<button class="btn" id="btn-pack-dingtalk" type="button">导入包 · 钉钉待办</button></div>' +
+       '<div class="meta">只导出「可直接建单」的条目：本次 <b>' + QC.packReady(ctx).length + '</b> 条进包，其余 <b>' + QC.packBlocked(ctx).length +
+       '</b> 条不进包（报告第六节逐条给原因）。竞品是把行动项全量同步进任务系统，这里是同步前的一道筛。</div></div>';
   h += '</section>';
 
   const G = QC.graded(ctx);
@@ -3892,9 +4116,10 @@ function render(ctx){
        ' · 仅提及 ' + cntOf("mention") + ' · 无依据 ' + (cntOf("absent") + cntOf("none") + cntOf("suggest")) + '</span></h3>';
   if (!ctx.rows.length){ h += '<div class="empty">无待办数据。</div>'; }
   else {
-    h += '<table><thead><tr><th>编号</th><th>负责人</th><th>来源</th><th>依据定位</th><th>指纹</th></tr></thead><tbody>';
+    h += '<table><thead><tr><th>编号</th><th>负责人</th><th>来源</th><th>依据定位</th><th>相似度</th><th>指纹</th></tr></thead><tbody>';
     G.forEach(g => {
-      h += '<tr><td class="num">' + esc(g.编号) + '</td><td>' + esc(g.负责人 || "—") + '</td><td><span class="' + bcls(g.来源码) + '">' + esc(g.来源) + '</span></td><td class="num">' + esc(g.定位) + '</td><td class="fp">' + esc(g.指纹 || "—") + '</td></tr>';
+      const dtxt = (g.差异 && g.差异.length) ? g.差异.map(d => d.op + "「" + esc(d.text) + "」").join("，") : "";
+      h += '<tr><td class="num">' + esc(g.编号) + '</td><td>' + esc(g.负责人 || "—") + '</td><td><span class="' + bcls(g.来源码) + '">' + esc(g.来源) + '</span></td><td class="num">' + esc(g.定位) + '</td><td class="num">' + (g.相似度 ? (Math.round(g.相似度 * 100) + "%") : "—") + (dtxt ? '<div class="fp">' + dtxt + '</div>' : '') + '</td><td class="fp">' + esc(g.指纹 || "—") + '</td></tr>';
     });
     h += '</tbody></table>';
     h += '<p class="note">来源只看字段旁边那句话：<b>本人认领</b>是他自己说「我来」；<b>他人指派</b>是别人点名派活；<b>仅提及</b>只是名字出现，不足以认定责任。竞品只给最终责任人，不给这一层——责任人错在哪儿，靠这个判断。</p>';
@@ -4241,6 +4466,14 @@ $("dl-csv").addEventListener("click", () => {
 $("result").addEventListener("click", e => {
   const b = e.target && e.target.closest ? e.target.closest("button") : null;
   if (!b) return;
+  if (b.id === "btn-pack-team" || b.id === "btn-pack-feishu" || b.id === "btn-pack-dingtalk"){
+    const ctx = LAST || collect(); if (!ctx) return; LAST = ctx;
+    const m = {"btn-pack-team": ["teambition", "任务导入包_teambition.csv"],
+               "btn-pack-feishu": ["feishu", "任务导入包_飞书任务.csv"],
+               "btn-pack-dingtalk": ["dingtalk", "任务导入包_钉钉待办.csv"]}[b.id];
+    download(m[1], QC.taskPack(ctx, m[0]), "text/csv;charset=utf-8");
+    return;
+  }
   if (b.id === "btn-receipt"){
     const ctx = LAST || collect(); if (!ctx) return; LAST = ctx;
     const r = QC.receipt(ctx);
